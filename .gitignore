@@ -1,0 +1,23 @@
+# Build results
+[Dd]ebug/
+[Rr]elease/
+[Bi]n/
+[Oo]bj/
+[Tt]arget/
+
+# Visual Studio / VS Code
+.vs/
+.vscode/
+
+# Rider
+.idea/
+
+# User-specific files
+*.user
+*.useruser
+*.suo
+*.userpre
+
+# OS specific files
+.DS_Store
+Thumbs.db
