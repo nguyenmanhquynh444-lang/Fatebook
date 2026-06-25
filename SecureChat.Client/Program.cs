@@ -21,7 +21,17 @@ namespace SecureChat.Client
                 var result = loginForm.ShowDialog();
                 if (result == DialogResult.OK && loginForm.Connection != null)
                 {
-                    Application.Run(new MainChatForm(loginForm.Connection));
+                    if (string.Equals(
+                        loginForm.Connection.LoggedInUser?.Role,
+                        "ADMIN",
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        Application.Run(new AdminForm(loginForm.Connection));
+                    }
+                    else
+                    {
+                        Application.Run(new MainChatForm(loginForm.Connection));
+                    }
                 }
             }
         }

@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS users (
     display_name VARCHAR(100) NOT NULL,
     public_key   TEXT         NOT NULL,          -- RSA Public Key (Base64 DER)
     status       ENUM('ONLINE','OFFLINE','AWAY') DEFAULT 'OFFLINE',
+    avatar_base64 LONGTEXT     NULL,
+    role         ENUM('ADMIN','USER') NOT NULL DEFAULT 'USER',
     created_at   TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
     is_active    BOOLEAN      DEFAULT TRUE
 ) ENGINE=InnoDB;
@@ -77,9 +79,9 @@ CREATE TABLE IF NOT EXISTS sessions (
 -- Tài khoản mẫu (password = "admin123" BCrypt)
 -- ---------------------------------------------------------------
 -- Lưu ý: public_key sẽ được cập nhật sau khi client đăng nhập lần đầu
-INSERT IGNORE INTO users (username, password, display_name, public_key) VALUES
-('admin',  '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj3bp.HQrn2e', 'Administrator', 'PENDING'),
-('kemchui',  '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj3bp.HQrn2e', 'kemchui',  'PENDING'),
-('shinichi',    '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj3bp.HQrn2e', 'shinichi',      'PENDING'),
-('Quynh','$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj3bp.HQrn2e', 'Quynh',    'PENDING');
+INSERT IGNORE INTO users (username, password, display_name, public_key, role) VALUES
+('admin',  '$2a$12$FDqRjLAGiFihCRqb2aq3Ue1eC9bRyLmdVd9bB0V/zYp6sGLRjLBRm', 'Administrator', 'PENDING', 'ADMIN'),
+('kemchui',  '$2a$12$FDqRjLAGiFihCRqb2aq3Ue1eC9bRyLmdVd9bB0V/zYp6sGLRjLBRm', 'kemchui',  'PENDING', 'USER'),
+('shinichi',    '$2a$12$FDqRjLAGiFihCRqb2aq3Ue1eC9bRyLmdVd9bB0V/zYp6sGLRjLBRm', 'shinichi',      'PENDING', 'USER'),
+('Quynh','$2a$12$FDqRjLAGiFihCRqb2aq3Ue1eC9bRyLmdVd9bB0V/zYp6sGLRjLBRm', 'Quynh',    'PENDING', 'USER');
 -- password cho tất cả tài khoản mẫu là: "admin123"

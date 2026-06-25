@@ -38,5 +38,61 @@ namespace SecureChat.Server.DAO
                 throw;
             }
         }
+
+        public static void EnsureSchemaAndAdmin()
+        {
+            using var conn = GetConnection();
+
+            EnsureColumn(
+                conn,
+                "users",
+                "avatar_base64",
+                "ALTER TABLE users ADD COLUMN avatar_base64 LONGTEXT NULL AFTER status");
+            EnsureColumn(
+                conn,
+                "users",
+                "role",
+                "ALTER TABLE users ADD COLUMN role ENUM('ADMIN','USER') NOT NULL DEFAULT 'USER' AFTER avatar_base64");
+            EnsureColumn(
+                conn,
+                "users",
+                "is_active",
+                "ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE");
+
+            string adminPasswordHash = BCrypt.Net.BCrypt.HashPassword("admin123", 12);
+            const string ensureAdminSql =
+                "INSERT INTO users (username, password, display_name, public_key, status, role, is_active) " +
+                "VALUES ('admin', @password, 'Administrator', 'PENDING', 'OFFLINE', 'ADMIN', TRUE) " +
+                "ON DUPLICATE KEY UPDATE password = @password, display_name = 'Administrator', " +
+                "role = 'ADMIN', is_active = TRUE";
+
+            using var cmd = new MySqlCommand(ensureAdminSql, conn);
+            cmd.Parameters.AddWithValue("@password", adminPasswordHash);
+            cmd.ExecuteNonQuery();
+
+            Console.WriteLine("[Database] Đã bảo đảm tài khoản quản trị admin/admin123.");
+        }
+
+        private static void EnsureColumn(
+            MySqlConnection conn,
+            string tableName,
+            string columnName,
+            string alterSql)
+        {
+            const string existsSql =
+                "SELECT COUNT(*) FROM information_schema.COLUMNS " +
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @tableName AND COLUMN_NAME = @columnName";
+
+            using var existsCmd = new MySqlCommand(existsSql, conn);
+            existsCmd.Parameters.AddWithValue("@tableName", tableName);
+            existsCmd.Parameters.AddWithValue("@columnName", columnName);
+            bool exists = Convert.ToInt32(existsCmd.ExecuteScalar()) > 0;
+
+            if (!exists)
+            {
+                using var alterCmd = new MySqlCommand(alterSql, conn);
+                alterCmd.ExecuteNonQuery();
+            }
+        }
     }
 }

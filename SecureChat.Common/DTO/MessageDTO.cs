@@ -21,18 +21,29 @@ namespace SecureChat.Common.DTO
             VIDEO_ACCEPT,
             VIDEO_REJECT,
             VIDEO_HANGUP,
-            VIDEO_FRAME
+            VIDEO_FRAME,
+            AVATAR_UPDATE,
+            ADMIN_LIST_USERS,
+            ADMIN_USER_LIST,
+            ADMIN_CREATE_USER,
+            ADMIN_DELETE_USER,
+            ADMIN_SET_ACTIVE,
+            ADMIN_RESULT,
+            ADMIN_UPDATE_USER
         }
 
         public MessageType Type { get; set; }
         public int SenderId { get; set; }
         public string SenderUsername { get; set; } = string.Empty;
+        public int TargetUserId { get; set; }
         public int RoomId { get; set; }
         public string EncryptedContent { get; set; } = string.Empty; // AES-GCM encrypted (Base64)
         public string PlainContent { get; set; } = string.Empty;     // Used only for SYSTEM/LOGIN (plaintext)
         public string FileName { get; set; } = string.Empty;         // For Type == FILE
         public long FileSize { get; set; }
         public long Timestamp { get; set; }
+        public string UserRole { get; set; } = string.Empty;         // Used by login/admin responses
+        public bool UserIsActive { get; set; } = true;
 
         public MessageDTO()
         {

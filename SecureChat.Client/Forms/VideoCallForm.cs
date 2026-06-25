@@ -19,6 +19,7 @@ namespace SecureChat.Client.Forms
         private readonly string _myUsername;
         private readonly int _myId;
         private readonly byte[] _aesKey;
+        private readonly bool _isVideo;
 
         private FilterInfoCollection? _videoDevices;
         private VideoCaptureDevice? _videoSource;
@@ -26,7 +27,10 @@ namespace SecureChat.Client.Forms
         private long _lastFrameSentTime = 0;
         private bool _isCallActive = false;
 
-        public VideoCallForm(SecureConnection connection, int roomId, int targetUserId, string targetUserDisplayName, bool isCaller)
+        private Panel? pnlVoiceCall;
+        private Label? lblVoiceAvatar;
+
+        public VideoCallForm(SecureConnection connection, int roomId, int targetUserId, string targetUserDisplayName, bool isCaller, bool isVideo = true)
         {
             InitializeComponent();
             _connection = connection;
@@ -34,6 +38,7 @@ namespace SecureChat.Client.Forms
             _targetUserId = targetUserId;
             _targetUserDisplayName = targetUserDisplayName;
             _isCaller = isCaller;
+            _isVideo = isVideo;
             _myUsername = connection.LoggedInUser?.Username ?? "User";
             _myId = connection.LoggedInUser?.Id ?? 0;
             _aesKey = connection.AesKey!;
@@ -43,15 +48,93 @@ namespace SecureChat.Client.Forms
 
         private void SetupStyles()
         {
-            this.Text = $"Cuộc gọi video với {_targetUserDisplayName}";
-            this.BackColor = Color.FromArgb(20, 20, 25);
-            this.ForeColor = Color.White;
+            this.BackColor = ChatTheme.Bg0;
+            this.ForeColor = ChatTheme.Text0;
+            this.Font = ChatTheme.Font(9F);
             this.StartPosition = FormStartPosition.CenterScreen;
             this.Size = new Size(800, 600);
+            this.MinimumSize = new Size(720, 520);
             this.FormBorderStyle = FormBorderStyle.Sizable;
 
+            if (_isVideo)
+            {
+                picRemote.BackColor = ChatTheme.Bg0;
+                picRemote.BorderStyle = BorderStyle.None;
+                picLocal.BackColor = ChatTheme.Bg3;
+                picLocal.BorderStyle = BorderStyle.None;
+                picLocal.Paint += (_, e) => ChatTheme.PaintRoundedBorder(picLocal, e, ChatTheme.Border, 12);
+                ChatTheme.ApplyRoundedRegion(picLocal, 12);
+                picLocal.Resize += (_, _) => ChatTheme.ApplyRoundedRegion(picLocal, 12);
+                picRemote.SendToBack();
+                picLocal.BringToFront();
+            }
+            else
+            {
+                picLocal.Visible = false;
+                picRemote.Visible = false;
+
+                pnlVoiceCall = new Panel
+                {
+                    BackColor = ChatTheme.Bg1,
+                    Dock = DockStyle.Fill
+                };
+
+                lblVoiceAvatar = new Label
+                {
+                    Text = ChatTheme.Initials(_targetUserDisplayName),
+                    BackColor = ChatTheme.Accent,
+                    ForeColor = Color.White,
+                    Font = ChatTheme.Font(24F, FontStyle.Bold),
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    Size = new Size(100, 100)
+                };
+                ChatTheme.ApplyRoundedRegion(lblVoiceAvatar, 50);
+
+                Label lblSecureTip = new Label
+                {
+                    Text = "🔒 Cuộc gọi thoại được bảo mật bằng mã hóa đầu cuối (E2EE)",
+                    ForeColor = ChatTheme.Green,
+                    Font = ChatTheme.Font(9.5F, FontStyle.Bold),
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    Height = 24
+                };
+
+                pnlVoiceCall.Controls.Add(lblVoiceAvatar);
+                pnlVoiceCall.Controls.Add(lblSecureTip);
+                this.Controls.Add(pnlVoiceCall);
+
+                pnlVoiceCall.Resize += (s, e) =>
+                {
+                    lblVoiceAvatar.Location = new Point((pnlVoiceCall.Width - 100) / 2, (pnlVoiceCall.Height - 100) / 2 - 40);
+                    lblSecureTip.SetBounds(10, lblVoiceAvatar.Bottom + 20, pnlVoiceCall.Width - 20, 24);
+                };
+                pnlVoiceCall.SendToBack();
+            }
+
+            btnHangUp.Text = "CÚP MÁY";
+            btnHangUp.Font = ChatTheme.Font(10.5F, FontStyle.Bold);
+            ChatTheme.ApplyDangerButton(btnHangUp, 20);
+
+            lblStatus.Font = ChatTheme.Font(12F, FontStyle.Bold);
+            lblStatus.ForeColor = ChatTheme.Yellow;
+            lblStatus.BackColor = Color.Transparent;
             lblStatus.Text = _isCaller ? "Đang đổ chuông đối phương..." : "Đang kết nối cuộc gọi...";
-            lblStatus.ForeColor = Color.FromArgb(241, 196, 15); // Vàng
+
+            lblStatus.BringToFront();
+            btnHangUp.BringToFront();
+            
+            LayoutVideoControls();
+            this.Resize += (_, _) => LayoutVideoControls();
+        }
+
+        private void LayoutVideoControls()
+        {
+            if (_isVideo)
+            {
+                picLocal.SetBounds(ClientSize.Width - 196, ClientSize.Height - 152, 176, 116);
+            }
+            btnHangUp.SetBounds((ClientSize.Width - 136) / 2, ClientSize.Height - 66, 136, 42);
+            lblStatus.SetBounds(20, 18, ClientSize.Width - 40, 28);
         }
 
         private void VideoCallForm_Load(object sender, EventArgs e)
@@ -71,7 +154,7 @@ namespace SecureChat.Client.Forms
             this.BeginInvoke(new Action(() =>
             {
                 lblStatus.Text = "Đang đàm thoại (Bảo mật đầu cuối)";
-                lblStatus.ForeColor = Color.FromArgb(46, 204, 113); // Xanh lá
+                lblStatus.ForeColor = ChatTheme.Green;
             }));
 
             // Bắt đầu camera hoặc camera giả lập
@@ -80,6 +163,7 @@ namespace SecureChat.Client.Forms
 
         private void InitializeCamera()
         {
+            if (!_isVideo) return; // Không khởi tạo camera cho cuộc gọi thoại!
             try
             {
                 _videoDevices = new FilterInfoCollection(FilterCategory.VideoInputDevice);
@@ -175,6 +259,7 @@ namespace SecureChat.Client.Forms
                         RoomId = _roomId,
                         SenderId = _myId,
                         SenderUsername = _myUsername,
+                        TargetUserId = _targetUserId,
                         EncryptedContent = encrypted
                     };
 
@@ -193,13 +278,17 @@ namespace SecureChat.Client.Forms
                 byte[] jpegBytes = Convert.FromBase64String(base64Decrypted);
                 using (MemoryStream ms = new MemoryStream(jpegBytes))
                 {
-                    Image img = Image.FromStream(ms);
-                    this.BeginInvoke(new Action(() =>
+                    using (Image tempImg = Image.FromStream(ms))
                     {
-                        var oldImg = picRemote.Image;
-                        picRemote.Image = img;
-                        oldImg?.Dispose();
-                    }));
+                        // Tạo một Bitmap mới sao chép dữ liệu từ tempImg để giải phóng MemoryStream ngay lập tức
+                        Bitmap bmp = new Bitmap(tempImg);
+                        this.BeginInvoke(new Action(() =>
+                        {
+                            var oldImg = picRemote.Image;
+                            picRemote.Image = bmp;
+                            oldImg?.Dispose();
+                        }));
+                    }
                 }
             }
             catch { }
@@ -211,14 +300,14 @@ namespace SecureChat.Client.Forms
             using (Graphics g = Graphics.FromImage(bmp))
             {
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                g.Clear(Color.FromArgb(30, 30, 36));
+                g.Clear(ChatTheme.Bg2);
 
                 // Vẽ vòng tròn hoạt động
                 double angle = (DateTime.Now.Millisecond / 1000.0) * 2 * Math.PI;
                 int cx = 160 + (int)(30 * Math.Cos(angle));
                 int cy = 120 + (int)(30 * Math.Sin(angle));
 
-                using (Brush circleBrush = new SolidBrush(Color.FromArgb(108, 92, 231)))
+                using (Brush circleBrush = new SolidBrush(ChatTheme.Accent))
                 {
                     g.FillEllipse(circleBrush, cx - 20, cy - 20, 40, 40);
                 }
@@ -233,7 +322,7 @@ namespace SecureChat.Client.Forms
                 }
 
                 // Vẽ khung định dạng
-                using (Pen borderPen = new Pen(Color.FromArgb(108, 92, 231, 120), 2))
+                using (Pen borderPen = new Pen(Color.FromArgb(120, ChatTheme.Accent), 2))
                 {
                     g.DrawRectangle(borderPen, 8, 8, 304, 224);
                     g.DrawLine(borderPen, 0, 120, 320, 120);
@@ -260,7 +349,8 @@ namespace SecureChat.Client.Forms
                     {
                         RoomId = _roomId,
                         SenderId = _myId,
-                        SenderUsername = _myUsername
+                        SenderUsername = _myUsername,
+                        TargetUserId = _targetUserId
                     };
                     _connection.SendMessage(hangupMsg);
                 }

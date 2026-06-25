@@ -13,7 +13,7 @@ namespace SecureChat.Server.DAO
         /// </summary>
         public static UserDTO? Authenticate(string username, string rawPassword)
         {
-            string sql = "SELECT id, username, password, display_name, public_key, status " +
+            string sql = "SELECT id, username, password, display_name, public_key, status, avatar_base64, role, is_active " +
                          "FROM users WHERE username = @username AND is_active = TRUE";
 
             try
@@ -49,8 +49,8 @@ namespace SecureChat.Server.DAO
         public static int CreateUser(string username, string rawPassword, string displayName)
         {
             string hashedPwd = BCrypt.Net.BCrypt.HashPassword(rawPassword, 12);
-            string sql = "INSERT INTO users (username, password, display_name, public_key) " +
-                         "VALUES (@username, @password, @displayName, 'PENDING')";
+            string sql = "INSERT INTO users (username, password, display_name, public_key, role, is_active) " +
+                         "VALUES (@username, @password, @displayName, 'PENDING', 'USER', TRUE)";
 
             try
             {
@@ -69,6 +69,166 @@ namespace SecureChat.Server.DAO
                 Console.WriteLine($"[UserDAO] Lỗi tạo user '{username}': {ex.Message}");
             }
             return -1;
+        }
+
+        public static List<UserDTO> GetAllUsersForAdmin()
+        {
+            var list = new List<UserDTO>();
+            string sql = "SELECT id, username, display_name, public_key, status, avatar_base64, role, is_active " +
+                         "FROM users ORDER BY role, username";
+
+            try
+            {
+                using (var conn = DatabaseConnection.GetConnection())
+                using (var cmd = new MySqlCommand(sql, conn))
+                using (var reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        list.Add(MapToDTO(reader));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[UserDAO] Lỗi lấy danh sách quản trị: {ex.Message}");
+            }
+
+            return list;
+        }
+
+        public static bool DeleteUser(int userId, out string error)
+        {
+            error = string.Empty;
+
+            try
+            {
+                using var conn = DatabaseConnection.GetConnection();
+                using var transaction = conn.BeginTransaction();
+
+                using (var deleteMessages = new MySqlCommand(
+                    "DELETE FROM messages WHERE sender_id = @id", conn, transaction))
+                {
+                    deleteMessages.Parameters.AddWithValue("@id", userId);
+                    deleteMessages.ExecuteNonQuery();
+                }
+
+                using (var deleteUser = new MySqlCommand(
+                    "DELETE FROM users WHERE id = @id AND role <> 'ADMIN'", conn, transaction))
+                {
+                    deleteUser.Parameters.AddWithValue("@id", userId);
+                    int affected = deleteUser.ExecuteNonQuery();
+                    if (affected == 0)
+                    {
+                        transaction.Rollback();
+                        error = "Không tìm thấy user hoặc không được phép xóa tài khoản admin.";
+                        return false;
+                    }
+                }
+
+                transaction.Commit();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                Console.WriteLine($"[UserDAO] Lỗi xóa user {userId}: {ex.Message}");
+                return false;
+            }
+        }
+
+        public static bool UpdateUserAdmin(int userId, string username, string? rawPassword, string displayName, out string error)
+        {
+            error = string.Empty;
+            try
+            {
+                using var conn = DatabaseConnection.GetConnection();
+
+                string checkSql = "SELECT COUNT(*) FROM users WHERE username = @username AND id <> @id";
+                using (var checkCmd = new MySqlCommand(checkSql, conn))
+                {
+                    checkCmd.Parameters.AddWithValue("@username", username);
+                    checkCmd.Parameters.AddWithValue("@id", userId);
+                    long count = Convert.ToInt64(checkCmd.ExecuteScalar());
+                    if (count > 0)
+                    {
+                        error = "Tên đăng nhập đã tồn tại.";
+                        return false;
+                    }
+                }
+
+                string sql;
+                if (!string.IsNullOrEmpty(rawPassword))
+                {
+                    string hashedPwd = BCrypt.Net.BCrypt.HashPassword(rawPassword, 12);
+                    sql = "UPDATE users SET username = @username, password = @password, display_name = @displayName " +
+                          "WHERE id = @id AND role <> 'ADMIN'";
+                    using var cmd = new MySqlCommand(sql, conn);
+                    cmd.Parameters.AddWithValue("@username", username);
+                    cmd.Parameters.AddWithValue("@password", hashedPwd);
+                    cmd.Parameters.AddWithValue("@displayName", displayName);
+                    cmd.Parameters.AddWithValue("@id", userId);
+                    int affected = cmd.ExecuteNonQuery();
+                    if (affected == 0)
+                    {
+                        error = "Không tìm thấy user hoặc không được phép sửa tài khoản admin.";
+                        return false;
+                    }
+                    return true;
+                }
+                else
+                {
+                    sql = "UPDATE users SET username = @username, display_name = @displayName " +
+                          "WHERE id = @id AND role <> 'ADMIN'";
+                    using var cmd = new MySqlCommand(sql, conn);
+                    cmd.Parameters.AddWithValue("@username", username);
+                    cmd.Parameters.AddWithValue("@displayName", displayName);
+                    cmd.Parameters.AddWithValue("@id", userId);
+                    int affected = cmd.ExecuteNonQuery();
+                    if (affected == 0)
+                    {
+                        error = "Không tìm thấy user hoặc không được phép sửa tài khoản admin.";
+                        return false;
+                    }
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                Console.WriteLine($"[UserDAO] Lỗi cập nhật user {userId}: {ex.Message}");
+                return false;
+            }
+        }
+
+        public static bool SetUserActive(int userId, bool isActive, out string error)
+        {
+            error = string.Empty;
+            string sql = "UPDATE users SET is_active = @isActive, " +
+                         "status = CASE WHEN @isActive = FALSE THEN 'OFFLINE' ELSE status END " +
+                         "WHERE id = @id AND role <> 'ADMIN'";
+
+            try
+            {
+                using var conn = DatabaseConnection.GetConnection();
+                using var cmd = new MySqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@isActive", isActive);
+                cmd.Parameters.AddWithValue("@id", userId);
+
+                if (cmd.ExecuteNonQuery() == 0)
+                {
+                    error = "Không tìm thấy user hoặc không được phép vô hiệu hóa tài khoản admin.";
+                    return false;
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                Console.WriteLine($"[UserDAO] Lỗi cập nhật trạng thái hoạt động user {userId}: {ex.Message}");
+                return false;
+            }
         }
 
         /// <summary>
@@ -116,12 +276,34 @@ namespace SecureChat.Server.DAO
         }
 
         /// <summary>
+        /// Cập nhật Avatar dạng Base64 của người dùng.
+        /// </summary>
+        public static void UpdateAvatar(int userId, string avatarBase64)
+        {
+            string sql = "UPDATE users SET avatar_base64 = @avatar WHERE id = @id";
+            try
+            {
+                using (var conn = DatabaseConnection.GetConnection())
+                using (var cmd = new MySqlCommand(sql, conn))
+                {
+                    cmd.Parameters.AddWithValue("@avatar", string.IsNullOrEmpty(avatarBase64) ? DBNull.Value : avatarBase64);
+                    cmd.Parameters.AddWithValue("@id", userId);
+                    cmd.ExecuteNonQuery();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[UserDAO] Lỗi cập nhật avatar cho user {userId}: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Lấy toàn bộ danh sách tài khoản active.
         /// </summary>
         public static List<UserDTO> GetAllActiveUsers()
         {
             var list = new List<UserDTO>();
-            string sql = "SELECT id, username, display_name, public_key, status " +
+            string sql = "SELECT id, username, display_name, public_key, status, avatar_base64, role, is_active " +
                          "FROM users WHERE is_active = TRUE ORDER BY display_name";
             try
             {
@@ -147,7 +329,7 @@ namespace SecureChat.Server.DAO
         /// </summary>
         public static UserDTO? GetUserById(int id)
         {
-            string sql = "SELECT id, username, display_name, public_key, status " +
+            string sql = "SELECT id, username, display_name, public_key, status, avatar_base64, role, is_active " +
                          "FROM users WHERE id = @id";
             try
             {
@@ -173,13 +355,17 @@ namespace SecureChat.Server.DAO
 
         private static UserDTO MapToDTO(MySqlDataReader reader)
         {
+            int avatarCol = reader.GetOrdinal("avatar_base64");
             return new UserDTO
             {
                 Id = reader.GetInt32("id"),
                 Username = reader.GetString("username"),
                 DisplayName = reader.GetString("display_name"),
                 PublicKey = reader.GetString("public_key"),
-                Status = reader.GetString("status")
+                Status = reader.GetString("status"),
+                AvatarBase64 = (avatarCol >= 0 && !reader.IsDBNull(avatarCol)) ? reader.GetString(avatarCol) : string.Empty,
+                Role = reader.GetString("role"),
+                IsActive = reader.GetBoolean("is_active")
             };
         }
     }

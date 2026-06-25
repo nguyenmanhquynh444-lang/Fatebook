@@ -7,7 +7,7 @@ using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
-using System.Threading.Tasks;
+using System.Threading;
 using SecureChat.Common.DTO;
 using SecureChat.Server.Crypto;
 
@@ -20,6 +20,7 @@ namespace SecureChat.Server
         private readonly X509Certificate2 _serverCertificate;
         private TcpListener? _serverSocket;
         private volatile bool _running = true;
+        private Thread? _listenerThread;
 
         public FileTransferHandler(int port, RoomManager roomManager, X509Certificate2 serverCertificate)
         {
@@ -30,34 +31,50 @@ namespace SecureChat.Server
 
         public void Start()
         {
-            Task.Run(async () =>
+            _listenerThread = new Thread(ListenForFileClients)
             {
-                try
-                {
-                    _serverSocket = new TcpListener(IPAddress.Any, _port);
-                    _serverSocket.Start();
-                    Console.WriteLine($"[FileServer] FileTransferHandler đang lắng nghe tại port {_port}...");
-
-                    while (_running)
-                    {
-                        var clientSocket = await _serverSocket.AcceptTcpClientAsync();
-                        _ = Task.Run(() => HandleFileClientAsync(clientSocket));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[FileServer] Lỗi FileTransferHandler: {ex.Message}");
-                }
-            });
+                IsBackground = true,
+                Name = "FileListener"
+            };
+            _listenerThread.Start();
         }
 
-        private async Task HandleFileClientAsync(TcpClient socket)
+        private void ListenForFileClients()
+        {
+            try
+            {
+                _serverSocket = new TcpListener(IPAddress.Any, _port);
+                _serverSocket.Start();
+                Console.WriteLine($"[FileServer] FileTransferHandler đang lắng nghe tại port {_port}...");
+
+                while (_running)
+                {
+                    TcpClient clientSocket = _serverSocket.AcceptTcpClient();
+                    var clientThread = new Thread(() => HandleFileClient(clientSocket))
+                    {
+                        IsBackground = true,
+                        Name = $"FileClient-{clientSocket.Client.RemoteEndPoint}"
+                    };
+                    clientThread.Start();
+                }
+            }
+            catch (SocketException) when (!_running)
+            {
+                // Listener was stopped during shutdown.
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[FileServer] Lỗi FileTransferHandler: {ex.Message}");
+            }
+        }
+
+        private void HandleFileClient(TcpClient socket)
         {
             SslStream? sslStream = null;
             try
             {
                 sslStream = new SslStream(socket.GetStream(), false);
-                await sslStream.AuthenticateAsServerAsync(
+                sslStream.AuthenticateAsServer(
                     _serverCertificate,
                     clientCertificateRequired: false,
                     enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13,
@@ -71,20 +88,26 @@ namespace SecureChat.Server
                     int senderId = reader.ReadInt32();
                     string fileName = reader.ReadString();
                     long fileSize = reader.ReadInt64();
+                    long encryptedSize = reader.ReadInt64();
 
                     Console.WriteLine($"[FileServer] Nhận file '{fileName}' ({fileSize} bytes) từ userId={senderId} -> room={roomId}");
 
-                    // Đọc toàn bộ dữ liệu mã hoá còn lại
-                    byte[] encryptedData;
-                    using (var ms = new MemoryStream())
+                    if (encryptedSize < 0 || encryptedSize > int.MaxValue)
                     {
-                        byte[] buffer = new byte[8192];
-                        int bytesRead;
-                        while ((bytesRead = await sslStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                        throw new IOException($"Kích thước payload mã hóa không hợp lệ: {encryptedSize}");
+                    }
+
+                    // Đọc đúng số byte dữ liệu mã hoá, sau đó phản hồi OK ngay.
+                    byte[] encryptedData = new byte[encryptedSize];
+                    int offset = 0;
+                    while (offset < encryptedData.Length)
+                    {
+                        int bytesRead = sslStream.Read(encryptedData, offset, encryptedData.Length - offset);
+                        if (bytesRead == 0)
                         {
-                            ms.Write(buffer, 0, bytesRead);
+                            throw new EndOfStreamException("Client đóng kết nối trước khi gửi đủ dữ liệu file.");
                         }
-                        encryptedData = ms.ToArray();
+                        offset += bytesRead;
                     }
 
                     // Tạo MessageDTO loại FILE để broadcast

@@ -7,7 +7,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
-using System.Threading.Tasks;
+using System.Threading;
 using SecureChat.Common.DTO;
 using SecureChat.Common.Crypto;
 using SecureChat.Server.DAO;
@@ -29,6 +29,7 @@ namespace SecureChat.Server
         private RSAUtil.RsaKeyPair? _sessionRsaKeyPair; // RSA KeyPair của server sinh riêng cho phiên này
 
         private volatile bool _connected = true;
+        private Thread? _clientThread;
 
         public UserDTO? CurrentUser => _currentUser;
         public byte[]? AesKey => _aesKey;
@@ -42,14 +43,14 @@ namespace SecureChat.Server
 
         public void Start()
         {
-            // Xử lý client trong một Task chạy ngầm
-            Task.Run(async () =>
+            // Mỗi client được xử lý bởi một Thread nền tạo thủ công.
+            _clientThread = new Thread(() =>
             {
                 try
                 {
-                    await SetupSslStreamAsync();
-                    await PerformHandshakeAsync();
-                    await MessageLoopAsync();
+                    SetupSslStream();
+                    PerformHandshake();
+                    MessageLoop();
                 }
                 catch (IOException)
                 {
@@ -63,16 +64,21 @@ namespace SecureChat.Server
                 {
                     Cleanup();
                 }
-            });
+            })
+            {
+                IsBackground = true,
+                Name = $"ChatClient-{_clientSocket.Client.RemoteEndPoint}"
+            };
+            _clientThread.Start();
         }
 
-        private async Task SetupSslStreamAsync()
+        private void SetupSslStream()
         {
             // Thiết lập SSL Stream
             _sslStream = new SslStream(_clientSocket.GetStream(), false);
             
             // Xác thực Server TLS 1.3 / 1.2
-            await _sslStream.AuthenticateAsServerAsync(
+            _sslStream.AuthenticateAsServer(
                 _serverCertificate,
                 clientCertificateRequired: false,
                 enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13,
@@ -82,12 +88,12 @@ namespace SecureChat.Server
             _writer = new StreamWriter(_sslStream, Encoding.UTF8) { AutoFlush = true };
         }
 
-        private async Task PerformHandshakeAsync()
+        private void PerformHandshake()
         {
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
 
             // ── Bước 1: Đăng nhập ──────────────────────────────────
-            string? loginJson = await _reader!.ReadLineAsync();
+            string? loginJson = _reader!.ReadLine();
             if (string.IsNullOrEmpty(loginJson)) throw new IOException("Client không gửi thông tin đăng nhập.");
 
             var loginMsg = JsonSerializer.Deserialize<MessageDTO>(loginJson, options);
@@ -120,7 +126,7 @@ namespace SecureChat.Server
             SendLoginResponse(true, "Đăng nhập thành công!", _sessionRsaKeyPair.PublicKey);
 
             // ── Bước 3: Nhận RSA Public Key của Client ─────────────
-            string? clientKeyJson = await _reader.ReadLineAsync();
+            string? clientKeyJson = _reader.ReadLine();
             if (string.IsNullOrEmpty(clientKeyJson)) throw new IOException("Không nhận được Client Public Key.");
 
             var clientKeyMsg = JsonSerializer.Deserialize<MessageDTO>(clientKeyJson, options);
@@ -134,7 +140,7 @@ namespace SecureChat.Server
             _currentUser.PublicKey = clientPubKeyBase64;
 
             // ── Bước 4: Nhận AES Session Key (đã được Client mã hóa bằng RSA của Server) ──
-            string? keyExchangeJson = await _reader.ReadLineAsync();
+            string? keyExchangeJson = _reader.ReadLine();
             if (string.IsNullOrEmpty(keyExchangeJson)) throw new IOException("Không nhận được AES Key.");
 
             var keyMsg = JsonSerializer.Deserialize<MessageDTO>(keyExchangeJson, options);
@@ -157,11 +163,11 @@ namespace SecureChat.Server
             BroadcastUserJoined(user);
         }
 
-        private async Task MessageLoopAsync()
+        private void MessageLoop()
         {
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             string? line;
-            while (_connected && (line = await _reader!.ReadLineAsync()) != null)
+            while (_connected && (line = _reader!.ReadLine()) != null)
             {
                 try
                 {
@@ -199,7 +205,269 @@ namespace SecureChat.Server
                 case MessageDTO.MessageType.TYPING:
                     _roomManager.BroadcastToRoom(msg.RoomId, msg, _currentUser!.Id);
                     break;
+                case MessageDTO.MessageType.VIDEO_INVITE:
+                case MessageDTO.MessageType.VIDEO_ACCEPT:
+                case MessageDTO.MessageType.VIDEO_REJECT:
+                case MessageDTO.MessageType.VIDEO_HANGUP:
+                case MessageDTO.MessageType.VIDEO_FRAME:
+                    HandleVideoMessage(msg);
+                    break;
+                case MessageDTO.MessageType.AVATAR_UPDATE:
+                    HandleAvatarUpdate(msg);
+                    break;
+                case MessageDTO.MessageType.ADMIN_LIST_USERS:
+                    HandleAdminListUsers();
+                    break;
+                case MessageDTO.MessageType.ADMIN_CREATE_USER:
+                    HandleAdminCreateUser(msg);
+                    break;
+                case MessageDTO.MessageType.ADMIN_DELETE_USER:
+                    HandleAdminDeleteUser(msg);
+                    break;
+                case MessageDTO.MessageType.ADMIN_SET_ACTIVE:
+                    HandleAdminSetActive(msg);
+                    break;
+                case MessageDTO.MessageType.ADMIN_UPDATE_USER:
+                    HandleAdminUpdateUser(msg);
+                    break;
             }
+        }
+
+        private bool RequireAdmin()
+        {
+            if (_currentUser != null &&
+                string.Equals(_currentUser.Role, "ADMIN", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            SendAdminResult(false, "Bạn không có quyền thực hiện thao tác quản trị.");
+            return false;
+        }
+
+        private void HandleAdminListUsers()
+        {
+            if (!RequireAdmin()) return;
+            SendAdminUserList();
+        }
+
+        private void HandleAdminCreateUser(MessageDTO msg)
+        {
+            if (!RequireAdmin()) return;
+
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(msg.PlainContent);
+                JsonElement root = document.RootElement;
+                string username = root.GetProperty("Username").GetString()?.Trim() ?? string.Empty;
+                string password = root.GetProperty("Password").GetString() ?? string.Empty;
+                string displayName = root.GetProperty("DisplayName").GetString()?.Trim() ?? string.Empty;
+
+                if (username.Length < 3 || username.Length > 50)
+                {
+                    SendAdminResult(false, "Tên đăng nhập phải có từ 3 đến 50 ký tự.");
+                    return;
+                }
+
+                if (username.IndexOfAny(new[] { ':', ' ', '\t', '\r', '\n' }) >= 0)
+                {
+                    SendAdminResult(false, "Tên đăng nhập không được chứa khoảng trắng hoặc dấu hai chấm.");
+                    return;
+                }
+
+                if (password.Length < 6)
+                {
+                    SendAdminResult(false, "Mật khẩu phải có ít nhất 6 ký tự.");
+                    return;
+                }
+
+                if (string.IsNullOrWhiteSpace(displayName))
+                {
+                    displayName = username;
+                }
+
+                if (displayName.Length > 100)
+                {
+                    SendAdminResult(false, "Tên hiển thị không được vượt quá 100 ký tự.");
+                    return;
+                }
+
+                int userId = UserDAO.CreateUser(username, password, displayName);
+                if (userId <= 0)
+                {
+                    SendAdminResult(false, "Không thể tạo user. Tên đăng nhập có thể đã tồn tại.");
+                    return;
+                }
+
+                SendAdminResult(true, $"Đã tạo user '{username}'.");
+                SendAdminUserList();
+                _roomManager.BroadcastUserLists();
+            }
+            catch (Exception ex)
+            {
+                SendAdminResult(false, $"Dữ liệu tạo user không hợp lệ: {ex.Message}");
+            }
+        }
+
+        private void HandleAdminDeleteUser(MessageDTO msg)
+        {
+            if (!RequireAdmin()) return;
+            if (_currentUser == null || msg.TargetUserId == _currentUser.Id)
+            {
+                SendAdminResult(false, "Không thể xóa tài khoản đang đăng nhập.");
+                return;
+            }
+
+            if (!UserDAO.DeleteUser(msg.TargetUserId, out string error))
+            {
+                SendAdminResult(false, error);
+                return;
+            }
+
+            _roomManager.DisconnectUser(msg.TargetUserId, "Tài khoản của bạn đã bị quản trị viên xóa.");
+            SendAdminResult(true, "Đã xóa user.");
+            SendAdminUserList();
+            _roomManager.BroadcastUserLists();
+        }
+
+        private void HandleAdminSetActive(MessageDTO msg)
+        {
+            if (!RequireAdmin()) return;
+            if (_currentUser == null || msg.TargetUserId == _currentUser.Id)
+            {
+                SendAdminResult(false, "Không thể vô hiệu hóa tài khoản đang đăng nhập.");
+                return;
+            }
+
+            if (!bool.TryParse(msg.PlainContent, out bool isActive))
+            {
+                SendAdminResult(false, "Trạng thái tài khoản không hợp lệ.");
+                return;
+            }
+
+            if (!UserDAO.SetUserActive(msg.TargetUserId, isActive, out string error))
+            {
+                SendAdminResult(false, error);
+                return;
+            }
+
+            if (!isActive)
+            {
+                _roomManager.DisconnectUser(
+                    msg.TargetUserId,
+                    "Tài khoản của bạn đã bị quản trị viên vô hiệu hóa.");
+            }
+
+            SendAdminResult(true, isActive ? "Đã kích hoạt user." : "Đã vô hiệu hóa user.");
+            SendAdminUserList();
+            _roomManager.BroadcastUserLists();
+        }
+
+        private void HandleAdminUpdateUser(MessageDTO msg)
+        {
+            if (!RequireAdmin()) return;
+            if (_currentUser == null || msg.TargetUserId == _currentUser.Id)
+            {
+                SendAdminResult(false, "Không thể chỉnh sửa tài khoản đang đăng nhập.");
+                return;
+            }
+
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(msg.PlainContent);
+                JsonElement root = document.RootElement;
+                int targetUserId = root.GetProperty("UserId").GetInt32();
+                string username = root.GetProperty("Username").GetString()?.Trim() ?? string.Empty;
+                string password = root.GetProperty("Password").GetString() ?? string.Empty;
+                string displayName = root.GetProperty("DisplayName").GetString()?.Trim() ?? string.Empty;
+
+                if (targetUserId != msg.TargetUserId)
+                {
+                    SendAdminResult(false, "Yêu cầu không đồng nhất.");
+                    return;
+                }
+
+                if (username.Length < 3 || username.Length > 50)
+                {
+                    SendAdminResult(false, "Tên đăng nhập phải có từ 3 đến 50 ký tự.");
+                    return;
+                }
+
+                if (username.IndexOfAny(new[] { ':', ' ', '\t', '\r', '\n' }) >= 0)
+                {
+                    SendAdminResult(false, "Tên đăng nhập không được chứa khoảng trắng hoặc dấu hai chấm.");
+                    return;
+                }
+
+                if (!string.IsNullOrEmpty(password) && password.Length < 6)
+                {
+                    SendAdminResult(false, "Mật khẩu phải có ít nhất 6 ký tự.");
+                    return;
+                }
+
+                if (string.IsNullOrWhiteSpace(displayName))
+                {
+                    displayName = username;
+                }
+
+                if (displayName.Length > 100)
+                {
+                    SendAdminResult(false, "Tên hiển thị không được vượt quá 100 ký tự.");
+                    return;
+                }
+
+                if (!UserDAO.UpdateUserAdmin(targetUserId, username, string.IsNullOrEmpty(password) ? null : password, displayName, out string error))
+                {
+                    SendAdminResult(false, error);
+                    return;
+                }
+
+                _roomManager.DisconnectUser(targetUserId, "Thông tin tài khoản của bạn đã được thay đổi bởi quản trị viên. Vui lòng đăng nhập lại.");
+
+                SendAdminResult(true, $"Đã cập nhật user '{username}'.");
+                SendAdminUserList();
+                _roomManager.BroadcastUserLists();
+            }
+            catch (Exception ex)
+            {
+                SendAdminResult(false, $"Dữ liệu cập nhật user không hợp lệ: {ex.Message}");
+            }
+        }
+
+        private void SendAdminUserList()
+        {
+            var users = UserDAO.GetAllUsersForAdmin();
+            SendMessage(new MessageDTO(MessageDTO.MessageType.ADMIN_USER_LIST)
+            {
+                PlainContent = JsonSerializer.Serialize(users)
+            });
+        }
+
+        private void SendAdminResult(bool success, string message)
+        {
+            SendMessage(new MessageDTO(MessageDTO.MessageType.ADMIN_RESULT)
+            {
+                PlainContent = JsonSerializer.Serialize(new { Success = success, Message = message })
+            });
+        }
+
+        private void HandleAvatarUpdate(MessageDTO msg)
+        {
+            if (_currentUser == null) return;
+
+            string newAvatarBase64 = msg.PlainContent;
+            UserDAO.UpdateAvatar(_currentUser.Id, newAvatarBase64);
+            _currentUser.AvatarBase64 = newAvatarBase64;
+
+            // Broadcast to other online users
+            var broadcastMsg = new MessageDTO(MessageDTO.MessageType.AVATAR_UPDATE)
+            {
+                SenderId = _currentUser.Id,
+                SenderUsername = _currentUser.Username,
+                PlainContent = newAvatarBase64
+            };
+            _roomManager.BroadcastToAll(broadcastMsg, _currentUser.Id);
+            Console.WriteLine($"[ClientHandler] {_currentUser.Username} đã cập nhật avatar mới.");
         }
 
         private void HandleTextMessage(MessageDTO msg)
@@ -222,6 +490,34 @@ namespace SecureChat.Server
             msg.SenderId = _currentUser.Id;
             msg.SenderUsername = _currentUser.Username;
             _roomManager.BroadcastToRoom(msg.RoomId, msg, _currentUser.Id);
+        }
+
+        private void HandleVideoMessage(MessageDTO msg)
+        {
+            if (_currentUser == null) return;
+
+            msg.SenderId = _currentUser.Id;
+            msg.SenderUsername = _currentUser.Username;
+
+            if (msg.TargetUserId <= 0)
+            {
+                msg.TargetUserId = InferPrivateRoomPeer(msg.RoomId, _currentUser.Id);
+            }
+
+            _roomManager.JoinRoom(msg.RoomId, _currentUser.Id, this);
+            _roomManager.BroadcastToRoom(msg.RoomId, msg, _currentUser.Id);
+
+            Console.WriteLine($"[ClientHandler] Video {msg.Type}: from={_currentUser.Id}, target={msg.TargetUserId}, room={msg.RoomId}");
+        }
+
+        private static int InferPrivateRoomPeer(int roomId, int currentUserId)
+        {
+            int firstUserId = roomId / 100_000;
+            int secondUserId = roomId % 100_000;
+
+            if (firstUserId == currentUserId) return secondUserId;
+            if (secondUserId == currentUserId) return firstUserId;
+            return 0;
         }
 
         public void SendMessage(MessageDTO msg)
@@ -251,7 +547,10 @@ namespace SecureChat.Server
             if (success && _currentUser != null)
             {
                 response.SenderId = _currentUser.Id;
-                response.SenderUsername = _currentUser.Username;
+                response.SenderUsername = _currentUser.DisplayName; // client expects DisplayName in SenderUsername
+                response.FileName = _currentUser.AvatarBase64;     // client expects AvatarBase64 in FileName
+                response.UserRole = _currentUser.Role;
+                response.UserIsActive = _currentUser.IsActive;
             }
 
             SendMessage(response);
@@ -270,6 +569,18 @@ namespace SecureChat.Server
                 PlainContent = JsonSerializer.Serialize(users)
             };
             SendMessage(msg);
+        }
+
+        public void SendCurrentUserList()
+        {
+            SendUserList();
+        }
+
+        public void ForceDisconnect(string reason)
+        {
+            SendSystemMessage(reason);
+            _connected = false;
+            try { _clientSocket.Close(); } catch { }
         }
 
         private void BroadcastUserJoined(UserDTO user)

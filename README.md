@@ -36,6 +36,10 @@ Fatebook/
 │   └── Forms/                       # Các màn hình LoginForm, MainChatForm, HistoryForm
 ```
 
+
+
+
+
 ---
 
 ## Hướng Dẫn Cài Đặt & Chạy

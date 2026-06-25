@@ -120,7 +120,7 @@ namespace SecureChat.Client.Forms
             this.txtUsername.Name = "txtUsername";
             this.txtUsername.Size = new System.Drawing.Size(285, 27);
             this.txtUsername.TabIndex = 5;
-            this.txtUsername.Text = "admin";
+            this.txtUsername.Text = "";
             // 
             // lblPassword
             // 
@@ -141,10 +141,10 @@ namespace SecureChat.Client.Forms
             this.txtPassword.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(226)))), ((int)(((byte)(226)))), ((int)(((byte)(226)))));
             this.txtPassword.Location = new System.Drawing.Point(23, 180);
             this.txtPassword.Name = "txtPassword";
-            this.txtPassword.PasswordChar = '●';
             this.txtPassword.Size = new System.Drawing.Size(285, 27);
             this.txtPassword.TabIndex = 7;
-            this.txtPassword.Text = "admin123";
+            this.txtPassword.Text = "";
+            this.txtPassword.UseSystemPasswordChar = true;
             // 
             // btnLogin
             // 
@@ -252,6 +252,7 @@ namespace SecureChat.Client.Forms
             this.Controls.Add(this.lblSubTitle);
             this.Controls.Add(this.lblTitle);
             this.Controls.Add(this.panelCard);
+            this.AcceptButton = this.btnLogin;
             this.Name = "LoginForm";
             this.Text = "Đăng nhập";
             this.panelCard.ResumeLayout(false);

@@ -118,7 +118,8 @@ namespace SecureChat.Server.Crypto
             DirectoryInfo? dir = new DirectoryInfo(baseDir);
             while (dir != null)
             {
-                if (File.Exists(Path.Combine(dir.FullName, "SecureChat.Server.slnx")))
+                if (Directory.Exists(Path.Combine(dir.FullName, "SecureChat.Client")) && 
+                    Directory.Exists(Path.Combine(dir.FullName, "SecureChat.Server")))
                 {
                     string certsDir = Path.Combine(dir.FullName, "certs");
                     if (!Directory.Exists(certsDir))

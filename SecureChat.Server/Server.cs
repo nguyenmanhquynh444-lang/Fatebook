@@ -4,7 +4,6 @@ using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
-using System.Threading.Tasks;
 using SecureChat.Server.Crypto;
 using SecureChat.Server.DAO;
 
@@ -36,6 +35,7 @@ namespace SecureChat.Server
 
                 // 1. Kiểm tra kết nối CSDL MySQL
                 DatabaseConnection.TestConnection();
+                DatabaseConnection.EnsureSchemaAndAdmin();
 
                 // 2. Kiểm tra/Tự động sinh chứng chỉ SSL
                 CertGenerator.GenerateCertificatesIfNotExist();

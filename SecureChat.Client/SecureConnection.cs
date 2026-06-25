@@ -6,7 +6,7 @@ using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
-using System.Threading.Tasks;
+using System.Threading;
 using SecureChat.Common.DTO;
 using SecureChat.Common.Crypto;
 
@@ -25,6 +25,8 @@ namespace SecureChat.Client
         private byte[]? _aesKey; // Khóa phiên AES-256
         private RSAUtil.RsaKeyPair? _clientKeyPair; // Cặp khóa RSA của client
         private UserDTO? _loggedInUser;
+        private readonly object _sendLock = new();
+        private Thread? _receiveThread;
 
         private volatile bool _connected = false;
 
@@ -45,12 +47,12 @@ namespace SecureChat.Client
         /// <summary>
         /// Kết nối đến Server và thực hiện Handshake (Đăng nhập -> Trao đổi khóa).
         /// </summary>
-        public async Task<UserDTO?> ConnectAsync(string username, string password)
+        public UserDTO? Connect(string username, string password)
         {
             try
             {
                 _socket = new TcpClient();
-                await _socket.ConnectAsync(_serverHost, _serverPort);
+                _socket.Connect(_serverHost, _serverPort);
 
                 // Khởi tạo SslStream với bộ lọc xác thực chứng chỉ CA tùy chỉnh
                 _sslStream = new SslStream(
@@ -61,7 +63,7 @@ namespace SecureChat.Client
                 );
 
                 // Thực hiện SSL Handshake
-                await _sslStream.AuthenticateAsClientAsync(_serverHost);
+                _sslStream.AuthenticateAsClient(_serverHost);
 
                 _reader = new StreamReader(_sslStream, Encoding.UTF8);
                 _writer = new StreamWriter(_sslStream, Encoding.UTF8) { AutoFlush = true };
@@ -71,10 +73,10 @@ namespace SecureChat.Client
 
                 // 2. Gửi thông tin đăng nhập dạng plaintext DTO qua TLS
                 var loginMsg = MessageDTO.LoginRequest(username, password);
-                await SendRawAsync(loginMsg);
+                SendRaw(loginMsg);
 
                 // 3. Nhận phản hồi đăng nhập chứa RSA Public Key của Server
-                string? responseJson = await _reader.ReadLineAsync();
+                string? responseJson = _reader.ReadLine();
                 if (string.IsNullOrEmpty(responseJson)) throw new IOException("Server đóng kết nối đột ngột.");
 
                 var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
@@ -97,7 +99,10 @@ namespace SecureChat.Client
                 {
                     Id = loginResponse.SenderId,
                     Username = username,
-                    DisplayName = loginResponse.SenderUsername
+                    DisplayName = loginResponse.SenderUsername,
+                    AvatarBase64 = loginResponse.FileName ?? string.Empty,
+                    Role = string.IsNullOrWhiteSpace(loginResponse.UserRole) ? "USER" : loginResponse.UserRole,
+                    IsActive = loginResponse.UserIsActive
                 };
 
                 // 4. Gửi RSA Public Key của Client lên Server
@@ -105,7 +110,7 @@ namespace SecureChat.Client
                 {
                     PlainContent = _clientKeyPair.PublicKey
                 };
-                await SendRawAsync(clientKeyMsg);
+                SendRaw(clientKeyMsg);
 
                 // 5. Sinh khóa AES-256 ngẫu nhiên
                 _aesKey = AESUtil.GenerateKey();
@@ -116,7 +121,7 @@ namespace SecureChat.Client
                 {
                     PlainContent = Convert.ToBase64String(encryptedAesKey)
                 };
-                await SendRawAsync(aesKeyMsg);
+                SendRaw(aesKeyMsg);
 
                 _connected = true;
 
@@ -132,19 +137,19 @@ namespace SecureChat.Client
         /// <summary>
         /// Gửi tin nhắn văn bản (sẽ được tự động mã hóa AES-256-GCM).
         /// </summary>
-        public async Task SendTextAsync(int roomId, string plaintext)
+        public void SendText(int roomId, string plaintext)
         {
             if (!_connected || _aesKey == null) throw new InvalidOperationException("Chưa kết nối tới server.");
 
             string encrypted = AESUtil.Encrypt(plaintext, _aesKey);
             var msg = MessageDTO.TextMessage(_loggedInUser!.Id, _loggedInUser.Username, roomId, encrypted);
-            await SendRawAsync(msg);
+            SendRaw(msg);
         }
 
         /// <summary>
         /// Gửi file (bytes) bằng cách mở kết nối phụ cổng 8444, mã hóa và truyền.
         /// </summary>
-        public async Task SendFileAsync(int roomId, string fileName, byte[] fileBytes)
+        public void SendFile(int roomId, string fileName, byte[] fileBytes)
         {
             if (!_connected || _aesKey == null) throw new InvalidOperationException("Chưa kết nối tới server.");
 
@@ -154,7 +159,7 @@ namespace SecureChat.Client
             // 2. Kết nối tới cổng truyền file của server (8444)
             using (var fileSocket = new TcpClient())
             {
-                await fileSocket.ConnectAsync(_serverHost, 8444);
+                fileSocket.Connect(_serverHost, 8444);
 
                 using (var fileSslStream = new SslStream(
                     fileSocket.GetStream(),
@@ -162,7 +167,7 @@ namespace SecureChat.Client
                     new RemoteCertificateValidationCallback(ValidateServerCertificate),
                     null))
                 {
-                    await fileSslStream.AuthenticateAsClientAsync(_serverHost);
+                    fileSslStream.AuthenticateAsClient(_serverHost);
 
                     using (var writer = new BinaryWriter(fileSslStream, Encoding.UTF8))
                     {
@@ -171,6 +176,7 @@ namespace SecureChat.Client
                         writer.Write(_loggedInUser!.Id);
                         writer.Write(fileName);
                         writer.Write(fileBytes.LongLength);
+                        writer.Write(encryptedFileBytes.LongLength);
 
                         // Gửi toàn bộ dữ liệu file đã mã hóa
                         writer.Write(encryptedFileBytes);
@@ -225,13 +231,18 @@ namespace SecureChat.Client
 
         public void StartReceiveLoop()
         {
-            Task.Run(async () =>
+            if (_receiveThread != null && _receiveThread.IsAlive)
+            {
+                return;
+            }
+
+            _receiveThread = new Thread(() =>
             {
                 var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
                 try
                 {
                     string? line;
-                    while (_connected && _reader != null && (line = await _reader.ReadLineAsync()) != null)
+                    while (_connected && _reader != null && (line = _reader.ReadLine()) != null)
                     {
                         try
                         {
@@ -258,14 +269,19 @@ namespace SecureChat.Client
                 {
                     Disconnect();
                 }
-            });
+            })
+            {
+                IsBackground = true,
+                Name = "ServerReceive"
+            };
+            _receiveThread.Start();
         }
 
         public void SendMessage(MessageDTO msg)
         {
-            if (_writer != null)
+            lock (_sendLock)
             {
-                lock (_writer)
+                if (_writer != null)
                 {
                     string json = JsonSerializer.Serialize(msg);
                     _writer.WriteLine(json);
@@ -273,12 +289,69 @@ namespace SecureChat.Client
             }
         }
 
-        private async Task SendRawAsync(MessageDTO msg)
+        public void RequestAdminUserList()
         {
-            if (_writer != null)
+            SendMessage(new MessageDTO(MessageDTO.MessageType.ADMIN_LIST_USERS));
+        }
+
+        public void CreateUser(string username, string password, string displayName)
+        {
+            string payload = JsonSerializer.Serialize(new
             {
-                string json = JsonSerializer.Serialize(msg);
-                await _writer.WriteLineAsync(json);
+                Username = username,
+                Password = password,
+                DisplayName = displayName
+            });
+
+            SendMessage(new MessageDTO(MessageDTO.MessageType.ADMIN_CREATE_USER)
+            {
+                PlainContent = payload
+            });
+        }
+
+        public void UpdateUser(int userId, string username, string password, string displayName)
+        {
+            string payload = JsonSerializer.Serialize(new
+            {
+                UserId = userId,
+                Username = username,
+                Password = password,
+                DisplayName = displayName
+            });
+
+            SendMessage(new MessageDTO(MessageDTO.MessageType.ADMIN_UPDATE_USER)
+            {
+                TargetUserId = userId,
+                PlainContent = payload
+            });
+        }
+
+        public void DeleteUser(int userId)
+        {
+            SendMessage(new MessageDTO(MessageDTO.MessageType.ADMIN_DELETE_USER)
+            {
+                TargetUserId = userId
+            });
+        }
+
+        public void SetUserActive(int userId, bool isActive)
+        {
+            SendMessage(new MessageDTO(MessageDTO.MessageType.ADMIN_SET_ACTIVE)
+            {
+                TargetUserId = userId,
+                PlainContent = isActive.ToString()
+            });
+        }
+
+        private void SendRaw(MessageDTO msg)
+        {
+            lock (_sendLock)
+            {
+                if (_writer != null)
+                {
+                    string json = JsonSerializer.Serialize(msg);
+                    _writer.WriteLine(json);
+                }
             }
         }
 
@@ -343,14 +416,15 @@ namespace SecureChat.Client
             DirectoryInfo? dir = new DirectoryInfo(baseDir);
             while (dir != null)
             {
-                if (File.Exists(Path.Combine(dir.FullName, "SecureChat.Client.slnx")) || 
-                    File.Exists(Path.Combine(dir.FullName, "SecureChat.Server.slnx")))
+                if (Directory.Exists(Path.Combine(dir.FullName, "SecureChat.Client")) && 
+                    Directory.Exists(Path.Combine(dir.FullName, "SecureChat.Server")))
                 {
                     string certsDir = Path.Combine(dir.FullName, "certs");
-                    if (Directory.Exists(certsDir))
+                    if (!Directory.Exists(certsDir))
                     {
-                        return certsDir;
+                        Directory.CreateDirectory(certsDir);
                     }
+                    return certsDir;
                 }
                 dir = dir.Parent;
             }

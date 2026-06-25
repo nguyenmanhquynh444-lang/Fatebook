@@ -11,6 +11,9 @@ namespace SecureChat.Server.DAO
         /// </summary>
         public static int SaveMessage(int roomId, int senderId, string encryptedContent, string type, string fileName, long fileSize)
         {
+            // Đảm bảo phòng tồn tại trước khi lưu tin nhắn để tránh lỗi Foreign Key
+            CreateRoomIfNotExist(roomId, $"Room_{roomId}");
+
             string sql = "INSERT INTO messages " +
                          "(room_id, sender_id, encrypted_content, iv, message_type, file_name, file_size) " +
                          "VALUES (@roomId, @senderId, @encryptedContent, '', @messageType, @fileName, @fileSize)";

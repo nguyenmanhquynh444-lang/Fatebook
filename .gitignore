@@ -21,3 +21,13 @@
 # OS specific files
 .DS_Store
 Thumbs.db
+
+# Logs
+logs/
+
+# Publish
+publish/
+
+# SSL Cert Private Keys
+certs/*.pfx
+

@@ -95,6 +95,19 @@ namespace SecureChat.Server
         public void BroadcastToRoom(int roomId, MessageDTO msg, int excludeUserId)
         {
             var members = GetRoomMembers(roomId);
+            if (msg.TargetUserId > 0)
+            {
+                members.Add(msg.TargetUserId);
+            }
+            else
+            {
+                int inferredPeerId = InferPrivateRoomPeer(roomId, excludeUserId);
+                if (inferredPeerId > 0)
+                {
+                    members.Add(inferredPeerId);
+                }
+            }
+
             if (members.Count == 0)
             {
                 // Nếu phòng trống (chưa đăng ký member cụ thể), broadcast tới toàn server
@@ -105,6 +118,11 @@ namespace SecureChat.Server
             // Lấy ClientHandler của người gửi để lấy khóa giải mã
             _onlineClients.TryGetValue(excludeUserId, out var senderHandler);
             byte[]? senderKey = senderHandler?.AesKey;
+            if (senderHandler?.CurrentUser != null &&
+                (string.IsNullOrWhiteSpace(msg.SenderUsername) || msg.SenderUsername == "unknown"))
+            {
+                msg.SenderUsername = senderHandler.CurrentUser.Username;
+            }
 
             string? plaintext = null;
             byte[]? fileBytes = null;
@@ -145,6 +163,7 @@ namespace SecureChat.Server
                                 RoomId = msg.RoomId,
                                 SenderId = msg.SenderId,
                                 SenderUsername = msg.SenderUsername,
+                                TargetUserId = msg.TargetUserId,
                                 Timestamp = msg.Timestamp,
                                 FileName = msg.FileName,
                                 FileSize = msg.FileSize
@@ -208,6 +227,33 @@ namespace SecureChat.Server
                 return true;
             }
             return false;
+        }
+
+        public void DisconnectUser(int userId, string reason)
+        {
+            if (_onlineClients.TryGetValue(userId, out var handler))
+            {
+                handler.ForceDisconnect(reason);
+            }
+        }
+
+        public void BroadcastUserLists()
+        {
+            foreach (var handler in _onlineClients.Values)
+            {
+                handler.SendCurrentUserList();
+            }
+        }
+
+        private static int InferPrivateRoomPeer(int roomId, int currentUserId)
+        {
+            int firstUserId = roomId / 100_000;
+            int secondUserId = roomId % 100_000;
+
+            if (firstUserId <= 0 || secondUserId <= 0) return 0;
+            if (firstUserId == currentUserId) return secondUserId;
+            if (secondUserId == currentUserId) return firstUserId;
+            return 0;
         }
     }
 }

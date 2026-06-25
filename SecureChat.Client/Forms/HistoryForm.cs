@@ -19,25 +19,75 @@ namespace SecureChat.Client.Forms
 
         private void SetupStyles()
         {
-            this.BackColor = Color.FromArgb(30, 30, 36); // #1E1E24
-            this.ForeColor = Color.FromArgb(226, 226, 226);
-            this.Font = new Font("Segoe UI", 9F);
+            this.BackColor = ChatTheme.Bg0;
+            this.ForeColor = ChatTheme.Text0;
+            this.Font = ChatTheme.Font(9F);
             this.StartPosition = FormStartPosition.CenterParent;
+            this.MinimumSize = new Size(620, 420);
 
-            // Phong cách tối cho ListView
-            lstResults.BackColor = Color.FromArgb(42, 43, 54); // #2A2B36
-            lstResults.ForeColor = Color.FromArgb(226, 226, 226);
+            lblKeyword.ForeColor = ChatTheme.Text2;
+            lblKeyword.Font = ChatTheme.Font(8.5F, FontStyle.Bold);
+
+            lstResults.BackColor = ChatTheme.Bg1;
+            lstResults.ForeColor = ChatTheme.Text0;
             lstResults.BorderStyle = BorderStyle.None;
             lstResults.HeaderStyle = ColumnHeaderStyle.Nonclickable;
-            
-            txtKeyword.BackColor = Color.FromArgb(42, 43, 54);
-            txtKeyword.ForeColor = Color.FromArgb(226, 226, 226);
-            txtKeyword.BorderStyle = BorderStyle.FixedSingle;
+            lstResults.OwnerDraw = true;
+            lstResults.FullRowSelect = true;
+            lstResults.DrawColumnHeader += DrawHistoryHeader;
+            lstResults.DrawSubItem += DrawHistorySubItem;
 
-            btnSearch.BackColor = Color.FromArgb(108, 92, 231); // #6C5CE7
-            btnSearch.FlatStyle = FlatStyle.Flat;
-            btnSearch.FlatAppearance.BorderSize = 0;
-            btnSearch.ForeColor = Color.White;
+            ChatTheme.ApplyTextBox(txtKeyword);
+            txtKeyword.BackColor = ChatTheme.Bg3;
+            ChatTheme.ApplyPrimaryButton(btnSearch, 8);
+
+            LayoutHistoryControls();
+            this.Resize += (_, _) => LayoutHistoryControls();
+        }
+
+        private void LayoutHistoryControls()
+        {
+            int margin = 16;
+            lblKeyword.SetBounds(margin, 18, 128, 20);
+            btnSearch.SetBounds(ClientSize.Width - margin - 106, 12, 106, 32);
+            txtKeyword.SetBounds(150, 17, Math.Max(180, btnSearch.Left - 162), 24);
+            lstResults.SetBounds(margin, 58, ClientSize.Width - margin * 2, ClientSize.Height - 74);
+            colContent.Width = Math.Max(220, lstResults.Width - colSender.Width - colTime.Width - colRoom.Width - 8);
+        }
+
+        private void DrawHistoryHeader(object? sender, DrawListViewColumnHeaderEventArgs e)
+        {
+            using Brush headerBrush = new SolidBrush(ChatTheme.Bg3);
+            using Font headerFont = ChatTheme.Font(8.5F, FontStyle.Bold);
+            e.Graphics.FillRectangle(headerBrush, e.Bounds);
+            TextRenderer.DrawText(
+                e.Graphics,
+                e.Header?.Text ?? string.Empty,
+                headerFont,
+                e.Bounds,
+                ChatTheme.Text1,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis
+            );
+        }
+
+        private void DrawHistorySubItem(object? sender, DrawListViewSubItemEventArgs e)
+        {
+            bool isSelected = e.Item?.Selected == true;
+            Color rowColor = isSelected
+                ? ChatTheme.Hover
+                : (e.ItemIndex % 2 == 0 ? ChatTheme.Bg1 : ChatTheme.Bg2);
+
+            using Brush rowBrush = new SolidBrush(rowColor);
+            using Font rowFont = ChatTheme.Font(8.7F);
+            e.Graphics.FillRectangle(rowBrush, e.Bounds);
+            TextRenderer.DrawText(
+                e.Graphics,
+                e.SubItem?.Text ?? string.Empty,
+                rowFont,
+                e.Bounds,
+                isSelected ? ChatTheme.Text0 : ChatTheme.Text1,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis
+            );
         }
 
         private void btnSearch_Click(object sender, EventArgs e)

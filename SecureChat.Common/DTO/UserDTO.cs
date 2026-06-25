@@ -8,10 +8,13 @@ namespace SecureChat.Common.DTO
         public string PublicKey { get; set; } = string.Empty; // RSA Public Key (Base64)
         public string Status { get; set; } = "OFFLINE";      // ONLINE / OFFLINE / AWAY
         public string SessionToken { get; set; } = string.Empty;
+        public string AvatarBase64 { get; set; } = string.Empty; // Avatar Base64
+        public string Role { get; set; } = "USER";           // ADMIN / USER
+        public bool IsActive { get; set; } = true;
 
         public override string ToString()
         {
-            return $"UserDTO{{Id={Id}, Username='{Username}', DisplayName='{DisplayName}', Status='{Status}'}}";
+            return $"UserDTO{{Id={Id}, Username='{Username}', DisplayName='{DisplayName}', Role='{Role}', Status='{Status}', IsActive={IsActive}}}";
         }
     }
 }
