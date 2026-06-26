@@ -22,6 +22,10 @@ namespace SecureChat.Client.Forms
         private int _activeRoomId = -1;
         private VideoCallForm? _activeVideoCallForm;
         private Panel? _composerPanel;
+        private Panel? _friendshipActionsPanel;
+        private Panel? _searchPanel;
+        private TextBox? _txtSearchUser;
+        private Button? _btnSearchUser;
         private Label? _chatAvatar;
         private Panel? _incomingCallOverlay;
         private Panel? _incomingCallCard;
@@ -78,9 +82,48 @@ namespace SecureChat.Client.Forms
             pnlSidebar.Controls.Add(_myAvatar);
             UpdateMyAvatarVisuals();
 
+            // Cấu hình pnlSearch
+            _searchPanel = new Panel
+            {
+                Location = new Point(0, 56),
+                Size = new Size(pnlSidebar.Width, 40),
+                BackColor = Color.Transparent
+            };
+
+            _txtSearchUser = new TextBox
+            {
+                Location = new Point(12, 6),
+                Size = new Size(190, 24),
+                PlaceholderText = "Tìm Username chính xác...",
+                Font = ChatTheme.Font(9F)
+            };
+            ChatTheme.ApplyTextBox(_txtSearchUser);
+            _txtSearchUser.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter)
+                {
+                    e.SuppressKeyPress = true;
+                    PerformUserSearch();
+                }
+            };
+
+            _btnSearchUser = new Button
+            {
+                Location = new Point(208, 5),
+                Size = new Size(66, 26),
+                Text = "Tìm",
+                Font = ChatTheme.Font(8.5F, FontStyle.Bold)
+            };
+            ChatTheme.ApplyPrimaryButton(_btnSearchUser, 6);
+            _btnSearchUser.Click += (s, e) => PerformUserSearch();
+
+            _searchPanel.Controls.Add(_txtSearchUser);
+            _searchPanel.Controls.Add(_btnSearchUser);
+            pnlSidebar.Controls.Add(_searchPanel);
+
             pnlUserList.BackColor = ChatTheme.Bg1;
-            pnlUserList.Location = new Point(0, 60);
-            pnlUserList.Size = new Size(pnlSidebar.Width, pnlSidebar.Height - 60);
+            pnlUserList.Location = new Point(0, 102);
+            pnlUserList.Size = new Size(pnlSidebar.Width, pnlSidebar.Height - 102);
             pnlUserList.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             pnlUserList.Padding = new Padding(0, 4, 0, 12);
             pnlUserList.FlowDirection = FlowDirection.TopDown;
@@ -291,15 +334,184 @@ namespace SecureChat.Client.Forms
 
         private void LayoutComposer()
         {
-            if (_composerPanel == null) return;
-
             int width = Math.Max(220, pnlInput.ClientSize.Width - 32);
-            _composerPanel.SetBounds(16, 12, width, 48);
-            ChatTheme.ApplyRoundedRegion(_composerPanel, 12);
 
-            btnAttach.SetBounds(8, 6, 36, 36);
-            btnSend.SetBounds(_composerPanel.Width - 44, 6, 36, 36);
-            txtMessage.SetBounds(54, 13, Math.Max(80, _composerPanel.Width - 110), 24);
+            if (_composerPanel != null)
+            {
+                _composerPanel.SetBounds(16, 12, width, 48);
+                ChatTheme.ApplyRoundedRegion(_composerPanel, 12);
+
+                btnAttach.SetBounds(8, 6, 36, 36);
+                btnSend.SetBounds(_composerPanel.Width - 44, 6, 36, 36);
+                txtMessage.SetBounds(54, 13, Math.Max(80, _composerPanel.Width - 110), 24);
+            }
+
+            if (_friendshipActionsPanel != null)
+            {
+                _friendshipActionsPanel.SetBounds(16, 12, width, 48);
+                ChatTheme.ApplyRoundedRegion(_friendshipActionsPanel, 12);
+
+                foreach (Control ctrl in _friendshipActionsPanel.Controls)
+                {
+                    if (ctrl is Button btn)
+                    {
+                        if (btn.Text == "Chấp nhận")
+                        {
+                            btn.Location = new Point(width - 220, 9);
+                        }
+                        else if (btn.Text == "Từ chối")
+                        {
+                            btn.Location = new Point(width - 110, 9);
+                        }
+                    }
+                }
+            }
+        }
+
+        private void UpdateFriendshipUI()
+        {
+            if (this.InvokeRequired)
+            {
+                this.BeginInvoke(new Action(UpdateFriendshipUI));
+                return;
+            }
+
+            if (_activeChatUser == null)
+            {
+                pnlInput.Visible = false;
+                return;
+            }
+
+            pnlInput.Visible = true;
+
+            string fs = _activeChatUser.FriendshipStatus;
+            if (fs == "PENDING_RECEIVED")
+            {
+                if (_composerPanel != null) pnlInput.Controls.Remove(_composerPanel);
+
+                if (_friendshipActionsPanel == null)
+                {
+                    _friendshipActionsPanel = new Panel
+                    {
+                        BackColor = ChatTheme.Bg3,
+                    };
+                    _friendshipActionsPanel.Paint += (_, e) => ChatTheme.PaintRoundedBorder(_friendshipActionsPanel, e, ChatTheme.Border, 12);
+
+                    Label lblRequestMsg = new Label
+                    {
+                        Text = "Người này muốn kết bạn với bạn.",
+                        ForeColor = ChatTheme.Text0,
+                        Font = ChatTheme.Font(9.5F, FontStyle.Bold),
+                        Location = new Point(16, 14),
+                        AutoSize = true
+                    };
+
+                    Button btnAccept = new Button
+                    {
+                        Text = "Chấp nhận",
+                        Size = new Size(100, 30),
+                        Font = ChatTheme.Font(9F, FontStyle.Bold),
+                        Cursor = Cursors.Hand
+                    };
+                    ChatTheme.ApplyPrimaryButton(btnAccept, 6);
+                    btnAccept.Click += BtnAccept_Click;
+
+                    Button btnDecline = new Button
+                    {
+                        Text = "Từ chối",
+                        Size = new Size(100, 30),
+                        Font = ChatTheme.Font(9F, FontStyle.Bold),
+                        Cursor = Cursors.Hand
+                    };
+                    ChatTheme.ApplyDangerButton(btnDecline, 6);
+                    btnDecline.Click += BtnDecline_Click;
+
+                    _friendshipActionsPanel.Controls.Add(lblRequestMsg);
+                    _friendshipActionsPanel.Controls.Add(btnAccept);
+                    _friendshipActionsPanel.Controls.Add(btnDecline);
+                }
+
+                if (!pnlInput.Controls.Contains(_friendshipActionsPanel))
+                {
+                    pnlInput.Controls.Add(_friendshipActionsPanel);
+                }
+
+                btnVideoCall.Enabled = false;
+                if (btnAudioCall != null) btnAudioCall.Enabled = false;
+            }
+            else
+            {
+                if (_friendshipActionsPanel != null) pnlInput.Controls.Remove(_friendshipActionsPanel);
+
+                if (_composerPanel != null && !pnlInput.Controls.Contains(_composerPanel))
+                {
+                    pnlInput.Controls.Add(_composerPanel);
+                }
+
+                if (fs == "ACCEPTED")
+                {
+                    txtMessage.Enabled = true;
+                    btnSend.Enabled = true;
+                    btnAttach.Enabled = true;
+                    btnVideoCall.Enabled = true;
+                    if (btnAudioCall != null) btnAudioCall.Enabled = true;
+                    txtMessage.PlaceholderText = "Nhắn tin bảo mật...";
+                }
+                else if (fs == "PENDING_SENT")
+                {
+                    txtMessage.Enabled = false;
+                    btnSend.Enabled = false;
+                    btnAttach.Enabled = false;
+                    btnVideoCall.Enabled = false;
+                    if (btnAudioCall != null) btnAudioCall.Enabled = false;
+                    txtMessage.PlaceholderText = "Đang chờ chấp nhận kết bạn...";
+                }
+                else // NONE or others
+                {
+                    txtMessage.Enabled = true;
+                    btnSend.Enabled = true;
+                    btnAttach.Enabled = false;
+                    btnVideoCall.Enabled = false;
+                    if (btnAudioCall != null) btnAudioCall.Enabled = false;
+                    txtMessage.PlaceholderText = "Nhập tin nhắn đầu tiên để kết bạn...";
+                }
+            }
+
+            LayoutComposer();
+        }
+
+        private void BtnAccept_Click(object? sender, EventArgs e)
+        {
+            if (_activeChatUser == null) return;
+            var acceptMsg = new MessageDTO(MessageDTO.MessageType.FRIEND_ACCEPT)
+            {
+                SenderId = _connection.LoggedInUser!.Id,
+                SenderUsername = _connection.LoggedInUser.Username,
+                TargetUserId = _activeChatUser.Id,
+                RoomId = _activeRoomId
+            };
+            _connection.SendMessage(acceptMsg);
+
+            _activeChatUser.FriendshipStatus = "ACCEPTED";
+            UpdateFriendshipUI();
+            RenderUserList();
+        }
+
+        private void BtnDecline_Click(object? sender, EventArgs e)
+        {
+            if (_activeChatUser == null) return;
+            var declineMsg = new MessageDTO(MessageDTO.MessageType.FRIEND_DECLINE)
+            {
+                SenderId = _connection.LoggedInUser!.Id,
+                SenderUsername = _connection.LoggedInUser.Username,
+                TargetUserId = _activeChatUser.Id,
+                RoomId = _activeRoomId
+            };
+            _connection.SendMessage(declineMsg);
+
+            _activeChatUser.FriendshipStatus = "NONE";
+            UpdateFriendshipUI();
+            RenderUserList();
         }
 
         private void UpdateChatHeaderVisuals()
@@ -729,6 +941,18 @@ namespace SecureChat.Client.Forms
                     case MessageDTO.MessageType.AVATAR_UPDATE:
                         HandleIncomingAvatarUpdate(msg);
                         break;
+
+                    case MessageDTO.MessageType.FRIEND_REQUEST:
+                        HandleIncomingFriendRequest(msg);
+                        break;
+
+                    case MessageDTO.MessageType.FRIEND_ACCEPT:
+                        HandleIncomingFriendAccept(msg);
+                        break;
+
+                    case MessageDTO.MessageType.FRIEND_DECLINE:
+                        HandleIncomingFriendDecline(msg);
+                        break;
                 }
             }
             catch (Exception ex)
@@ -757,6 +981,50 @@ namespace SecureChat.Client.Forms
             }
         }
 
+        private void HandleIncomingFriendRequest(MessageDTO msg)
+        {
+            if (_allUsers.TryGetValue(msg.SenderId, out var user))
+            {
+                user.FriendshipStatus = "PENDING_RECEIVED";
+            }
+            
+            HandleIncomingText(msg);
+
+            RenderUserList();
+            if (_activeChatUser != null && _activeChatUser.Id == msg.SenderId)
+            {
+                UpdateFriendshipUI();
+            }
+        }
+
+        private void HandleIncomingFriendAccept(MessageDTO msg)
+        {
+            if (_allUsers.TryGetValue(msg.SenderId, out var user))
+            {
+                user.FriendshipStatus = "ACCEPTED";
+            }
+
+            RenderUserList();
+            if (_activeChatUser != null && _activeChatUser.Id == msg.SenderId)
+            {
+                UpdateFriendshipUI();
+            }
+        }
+
+        private void HandleIncomingFriendDecline(MessageDTO msg)
+        {
+            if (_allUsers.TryGetValue(msg.SenderId, out var user))
+            {
+                user.FriendshipStatus = "NONE";
+            }
+
+            RenderUserList();
+            if (_activeChatUser != null && _activeChatUser.Id == msg.SenderId)
+            {
+                UpdateFriendshipUI();
+            }
+        }
+
         private void UpdateUserList(string userListJson)
         {
             var list = JsonSerializer.Deserialize<List<UserDTO>>(userListJson, 
@@ -778,13 +1046,17 @@ namespace SecureChat.Client.Forms
             pnlUserList.SuspendLayout();
             pnlUserList.Controls.Clear();
 
-            // Sắp xếp online lên trước
-            var sortedUsers = _allUsers.Values
+            // Lọc danh sách: chỉ hiện bạn bè (ACCEPTED), đang gửi yêu cầu (PENDING_SENT), nhận yêu cầu (PENDING_RECEIVED), hoặc đang active chat (để hiện tạm thời khi tìm kiếm)
+            var filteredUsers = _allUsers.Values
+                .Where(u => u.FriendshipStatus == "ACCEPTED" || 
+                            u.FriendshipStatus == "PENDING_SENT" || 
+                            u.FriendshipStatus == "PENDING_RECEIVED" ||
+                            (_activeChatUser != null && u.Id == _activeChatUser.Id))
                 .OrderByDescending(u => u.Status == "ONLINE")
                 .ThenBy(u => u.DisplayName)
                 .ToList();
 
-            foreach (var user in sortedUsers)
+            foreach (var user in filteredUsers)
             {
                 pnlUserList.Controls.Add(CreateUserItem(user));
             }
@@ -870,13 +1142,32 @@ namespace SecureChat.Client.Forms
                 ForeColor = isOnline ? ChatTheme.Text0 : ChatTheme.Text2
             };
 
+            string displayStatus = isOnline ? "Đang hoạt động" : "Offline";
+            Color statusColor = isOnline ? ChatTheme.Green : ChatTheme.Text3;
+
+            if (user.FriendshipStatus == "PENDING_SENT")
+            {
+                displayStatus = "Chờ chấp nhận...";
+                statusColor = ChatTheme.Yellow;
+            }
+            else if (user.FriendshipStatus == "PENDING_RECEIVED")
+            {
+                displayStatus = "Lời mời kết bạn";
+                statusColor = ChatTheme.Yellow;
+            }
+            else if (user.FriendshipStatus == "NONE")
+            {
+                displayStatus = "Chưa kết bạn";
+                statusColor = ChatTheme.Text3;
+            }
+
             Label statusLabel = new Label
             {
-                Text = isOnline ? "Đang hoạt động" : "Offline",
+                Text = displayStatus,
                 Location = new Point(60, 31),
                 Size = new Size(width - 76, 18),
                 Font = ChatTheme.Font(8F),
-                ForeColor = isOnline ? ChatTheme.Green : ChatTheme.Text3
+                ForeColor = statusColor
             };
 
             item.Controls.Add(avatar);
@@ -902,6 +1193,29 @@ namespace SecureChat.Client.Forms
             return item;
         }
 
+        private void PerformUserSearch()
+        {
+            if (_txtSearchUser == null) return;
+            string query = _txtSearchUser.Text.Trim();
+            if (string.IsNullOrEmpty(query)) return;
+
+            // Tìm user có Username hoặc DisplayName trùng khớp chính xác (case-insensitive)
+            var foundUser = _allUsers.Values.FirstOrDefault(u => 
+                u.Username.Equals(query, StringComparison.OrdinalIgnoreCase) || 
+                u.DisplayName.Equals(query, StringComparison.OrdinalIgnoreCase)
+            );
+
+            if (foundUser != null)
+            {
+                SwitchChatUser(foundUser);
+                _txtSearchUser.Clear();
+            }
+            else
+            {
+                MessageBox.Show("Không tìm thấy người dùng có tên này!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+
         private void SwitchChatUser(UserDTO targetUser)
         {
             _activeChatUser = targetUser;
@@ -925,11 +1239,7 @@ namespace SecureChat.Client.Forms
             _connection.SendMessage(joinMsg);
 
             pnlMessages.Controls.Clear();
-            txtMessage.Enabled = true;
-            btnSend.Enabled = true;
-            btnAttach.Enabled = true;
-            btnVideoCall.Enabled = true;
-            if (btnAudioCall != null) btnAudioCall.Enabled = true;
+            UpdateFriendshipUI();
 
             // Load lịch sử local SQLite
             LoadLocalHistory();
@@ -1242,19 +1552,55 @@ namespace SecureChat.Client.Forms
             txtMessage.Clear();
             btnSend.Enabled = false;
 
+            // Kiểm tra trạng thái kết bạn
+            bool isFriendRequest = (_activeChatUser != null && _activeChatUser.FriendshipStatus == "NONE");
+            int targetUserId = _activeChatUser?.Id ?? 0;
+
             var sendThread = new Thread(() =>
             {
                 try
                 {
-                    _connection.SendText(roomId, text);
                     long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    if (isFriendRequest)
+                    {
+                        string encrypted = _connection.EncryptMessage(text);
+                        var reqMsg = new MessageDTO(MessageDTO.MessageType.FRIEND_REQUEST)
+                        {
+                            SenderId = currentUser.Id,
+                            SenderUsername = currentUser.Username,
+                            TargetUserId = targetUserId,
+                            RoomId = roomId,
+                            EncryptedContent = encrypted,
+                            Timestamp = ts
+                        };
+                        _connection.SendMessage(reqMsg);
+
+                        // Cập nhật trạng thái hiển thị
+                        if (_activeChatUser != null)
+                        {
+                            _activeChatUser.FriendshipStatus = "PENDING_SENT";
+                        }
+                    }
+                    else
+                    {
+                        _connection.SendText(roomId, text);
+                    }
 
                     RunOnUiThread(() =>
                     {
                         _historyDB?.SaveMessage(roomId, currentUser.Id, currentUser.Username, text, "TEXT", "", ts, true);
                         AddMessageBubble(text, currentUser.Username, true, ts);
-                        btnSend.Enabled = true;
-                        txtMessage.Focus();
+                        
+                        if (isFriendRequest)
+                        {
+                            UpdateFriendshipUI();
+                            RenderUserList();
+                        }
+                        else
+                        {
+                            btnSend.Enabled = true;
+                            txtMessage.Focus();
+                        }
                     });
                 }
                 catch (Exception ex)
@@ -1355,6 +1701,7 @@ namespace SecureChat.Client.Forms
 
             // Mở Form ở chế độ OUTGOING với isVideo = true
             _activeVideoCallForm = new VideoCallForm(_connection, _activeRoomId, _activeChatUser.Id, _activeChatUser.DisplayName, true, true);
+            BindVideoCallFormEvents(_activeVideoCallForm);
             
             // Gửi tin nhắn VIDEO_INVITE
             var inviteMsg = new MessageDTO(MessageDTO.MessageType.VIDEO_INVITE)
@@ -1376,6 +1723,7 @@ namespace SecureChat.Client.Forms
 
             // Mở Form ở chế độ OUTGOING với isVideo = false
             _activeVideoCallForm = new VideoCallForm(_connection, _activeRoomId, _activeChatUser.Id, _activeChatUser.DisplayName, true, false);
+            BindVideoCallFormEvents(_activeVideoCallForm);
             
             // Gửi tin nhắn VIDEO_INVITE với PlainContent = "AUDIO"
             var inviteMsg = new MessageDTO(MessageDTO.MessageType.VIDEO_INVITE)
@@ -1414,7 +1762,48 @@ namespace SecureChat.Client.Forms
             string callerName = GetDisplayNameForUser(invite.SenderId, invite.SenderUsername);
             bool isVideo = invite.PlainContent != "AUDIO";
             _activeVideoCallForm = new VideoCallForm(_connection, invite.RoomId, invite.SenderId, callerName, false, isVideo);
+            BindVideoCallFormEvents(_activeVideoCallForm);
             _activeVideoCallForm.Show(this);
+        }
+
+        private void BindVideoCallFormEvents(VideoCallForm callForm)
+        {
+            callForm.FormClosed += (s, ev) =>
+            {
+                if (s is VideoCallForm f)
+                {
+                    string summaryText;
+                    if (f.CallStartTime.HasValue && f.CallEndTime.HasValue)
+                    {
+                        var duration = f.CallEndTime.Value - f.CallStartTime.Value;
+                        string typeStr = f.IsVideo ? "📹 Cuộc gọi video" : "📞 Cuộc gọi thoại";
+                        string durationStr = duration.TotalHours >= 1
+                            ? $"{(int)duration.TotalHours:00}:{duration.Minutes:00}:{duration.Seconds:00}"
+                            : $"{duration.Minutes:00}:{duration.Seconds:00}";
+                        summaryText = $"{typeStr} đã kết thúc. Thời lượng: {durationStr}";
+                    }
+                    else
+                    {
+                        string typeStr = f.IsVideo ? "📹 Cuộc gọi video" : "📞 Cuộc gọi thoại";
+                        summaryText = $"{typeStr} đã kết thúc.";
+                    }
+
+                    // Lưu vào SQLite cục bộ
+                    long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    _historyDB?.SaveMessage(f.RoomId, 0, "Hệ thống", summaryText, "TEXT", "", ts, false);
+
+                    // Hiển thị bong bóng chat nếu đang ở trong phòng này
+                    RunOnUiThread(() =>
+                    {
+                        if (f.RoomId == _activeRoomId)
+                        {
+                            AddMessageBubble(summaryText, "Hệ thống", false, ts);
+                        }
+                    });
+
+                    _activeVideoCallForm = null;
+                }
+            };
         }
 
         private void DeclineIncomingVideoCall()

@@ -11,7 +11,7 @@ public class MessageDTO implements Serializable {
 
     public enum Type { TEXT, FILE, SYSTEM, LOGIN, LOGIN_RESPONSE,
                        KEY_EXCHANGE, USER_LIST, JOIN_ROOM, LEAVE_ROOM,
-                       TYPING, READ_RECEIPT }
+                       TYPING, READ_RECEIPT, FRIEND_REQUEST, FRIEND_ACCEPT, FRIEND_DECLINE }
 
     private Type   type;
     private int    senderId;

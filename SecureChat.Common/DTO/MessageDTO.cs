@@ -29,7 +29,10 @@ namespace SecureChat.Common.DTO
             ADMIN_DELETE_USER,
             ADMIN_SET_ACTIVE,
             ADMIN_RESULT,
-            ADMIN_UPDATE_USER
+            ADMIN_UPDATE_USER,
+            FRIEND_REQUEST,
+            FRIEND_ACCEPT,
+            FRIEND_DECLINE
         }
 
         public MessageType Type { get; set; }

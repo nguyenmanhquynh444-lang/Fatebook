@@ -21,6 +21,11 @@ namespace SecureChat.Client.Forms
         private readonly byte[] _aesKey;
         private readonly bool _isVideo;
 
+        public int RoomId => _roomId;
+        public bool IsVideo => _isVideo;
+        public DateTime? CallStartTime { get; private set; }
+        public DateTime? CallEndTime { get; private set; }
+
         private FilterInfoCollection? _videoDevices;
         private VideoCaptureDevice? _videoSource;
         private System.Windows.Forms.Timer? _simulatedCameraTimer;
@@ -150,6 +155,7 @@ namespace SecureChat.Client.Forms
         {
             if (_isCallActive) return;
             _isCallActive = true;
+            CallStartTime = DateTime.UtcNow;
 
             this.BeginInvoke(new Action(() =>
             {
@@ -339,6 +345,15 @@ namespace SecureChat.Client.Forms
 
         public void HangUp(bool sendNotification)
         {
+            if (_isCallActive && !CallStartTime.HasValue)
+            {
+                CallStartTime = DateTime.UtcNow;
+            }
+            if (_isCallActive && !CallEndTime.HasValue)
+            {
+                CallEndTime = DateTime.UtcNow;
+            }
+
             _isCallActive = false;
 
             if (sendNotification)

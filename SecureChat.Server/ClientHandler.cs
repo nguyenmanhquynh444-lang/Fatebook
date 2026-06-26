@@ -212,6 +212,15 @@ namespace SecureChat.Server
                 case MessageDTO.MessageType.VIDEO_FRAME:
                     HandleVideoMessage(msg);
                     break;
+                case MessageDTO.MessageType.FRIEND_REQUEST:
+                    HandleFriendRequest(msg);
+                    break;
+                case MessageDTO.MessageType.FRIEND_ACCEPT:
+                    HandleFriendAccept(msg);
+                    break;
+                case MessageDTO.MessageType.FRIEND_DECLINE:
+                    HandleFriendDecline(msg);
+                    break;
                 case MessageDTO.MessageType.AVATAR_UPDATE:
                     HandleAvatarUpdate(msg);
                     break;
@@ -472,8 +481,20 @@ namespace SecureChat.Server
 
         private void HandleTextMessage(MessageDTO msg)
         {
+            // Kiểm tra tình trạng bạn bè trước khi cho phép gửi tin nhắn thường
+            int peerId = InferPrivateRoomPeer(msg.RoomId, _currentUser!.Id);
+            if (peerId > 0)
+            {
+                string status = FriendshipDAO.GetFriendshipStatus(_currentUser.Id, peerId);
+                if (status != "ACCEPTED")
+                {
+                    Console.WriteLine($"[ClientHandler] Từ chối gửi tin nhắn TEXT từ {_currentUser.Id} tới {peerId} vì chưa kết bạn.");
+                    return;
+                }
+            }
+
             // Lưu tin nhắn đã mã hóa vào MySQL DB
-            MessageDAO.SaveMessage(msg.RoomId, _currentUser!.Id, msg.EncryptedContent, "TEXT", null!, 0);
+            MessageDAO.SaveMessage(msg.RoomId, _currentUser.Id, msg.EncryptedContent, "TEXT", null!, 0);
 
             // Chuyển tiếp tới những thành viên khác trong phòng
             msg.SenderId = _currentUser.Id;
@@ -483,10 +504,21 @@ namespace SecureChat.Server
 
         private void HandleFileMessage(MessageDTO msg)
         {
-            // Lưu tin nhắn chứa file đã mã hóa vào MySQL DB
-            MessageDAO.SaveMessage(msg.RoomId, _currentUser!.Id, msg.EncryptedContent, "FILE", msg.FileName, msg.FileSize);
+            // Kiểm tra tình trạng bạn bè trước khi cho phép gửi file
+            int peerId = InferPrivateRoomPeer(msg.RoomId, _currentUser!.Id);
+            if (peerId > 0)
+            {
+                string status = FriendshipDAO.GetFriendshipStatus(_currentUser.Id, peerId);
+                if (status != "ACCEPTED")
+                {
+                    Console.WriteLine($"[ClientHandler] Từ chối gửi file từ {_currentUser.Id} tới {peerId} vì chưa kết bạn.");
+                    return;
+                }
+            }
 
-            // Chuyển tiếp tới những thành viên khác trong phòng
+            // Lưu tin nhắn tệp tin vào MySQL DB
+            MessageDAO.SaveMessage(msg.RoomId, _currentUser.Id, msg.EncryptedContent, "FILE", msg.FileName, msg.FileSize);
+
             msg.SenderId = _currentUser.Id;
             msg.SenderUsername = _currentUser.Username;
             _roomManager.BroadcastToRoom(msg.RoomId, msg, _currentUser.Id);
@@ -504,6 +536,17 @@ namespace SecureChat.Server
                 msg.TargetUserId = InferPrivateRoomPeer(msg.RoomId, _currentUser.Id);
             }
 
+            // Kiểm tra tình trạng bạn bè trước khi cho phép gọi video
+            if (msg.TargetUserId > 0)
+            {
+                string status = FriendshipDAO.GetFriendshipStatus(_currentUser.Id, msg.TargetUserId);
+                if (status != "ACCEPTED")
+                {
+                    Console.WriteLine($"[ClientHandler] Từ chối gửi video message {msg.Type} từ {_currentUser.Id} tới {msg.TargetUserId} vì chưa kết bạn.");
+                    return;
+                }
+            }
+
             _roomManager.JoinRoom(msg.RoomId, _currentUser.Id, this);
             _roomManager.BroadcastToRoom(msg.RoomId, msg, _currentUser.Id);
 
@@ -518,6 +561,127 @@ namespace SecureChat.Server
             if (firstUserId == currentUserId) return secondUserId;
             if (secondUserId == currentUserId) return firstUserId;
             return 0;
+        }
+
+        private void HandleFriendRequest(MessageDTO msg)
+        {
+            if (_currentUser == null) return;
+
+            int targetUserId = msg.TargetUserId;
+            string? plaintext = null;
+
+            if (!string.IsNullOrEmpty(msg.EncryptedContent))
+            {
+                try
+                {
+                    if (_aesKey != null)
+                    {
+                        plaintext = AESUtil.Decrypt(msg.EncryptedContent, _aesKey);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ClientHandler] Lỗi giải mã tin nhắn kết bạn đầu tiên: {ex.Message}");
+                }
+            }
+
+            // 1. Lưu vào MySQL DB
+            FriendshipDAO.AddFriendRequest(_currentUser.Id, targetUserId);
+
+            // 2. Lưu tin nhắn đầu tiên (nếu có) vào MySQL DB
+            if (plaintext != null)
+            {
+                MessageDAO.SaveMessage(msg.RoomId, _currentUser.Id, msg.EncryptedContent, "TEXT", null!, 0);
+            }
+
+            // 3. Gửi danh sách cập nhật cho chính người gửi
+            SendCurrentUserList();
+
+            // 4. Gửi danh sách cập nhật + chuyển tiếp tin nhắn kết bạn cho người nhận nếu đang online
+            var receiverHandler = _roomManager.GetOnlineClients().FirstOrDefault(c => c._currentUser?.Id == targetUserId);
+            if (receiverHandler != null)
+            {
+                receiverHandler.SendCurrentUserList();
+
+                if (plaintext != null && receiverHandler.AesKey != null)
+                {
+                    try
+                    {
+                        var forwardedMsg = new MessageDTO(MessageDTO.MessageType.FRIEND_REQUEST)
+                        {
+                            SenderId = _currentUser.Id,
+                            SenderUsername = _currentUser.Username,
+                            RoomId = msg.RoomId,
+                            TargetUserId = targetUserId,
+                            EncryptedContent = AESUtil.Encrypt(plaintext, receiverHandler.AesKey),
+                            Timestamp = msg.Timestamp
+                        };
+                        receiverHandler.SendMessage(forwardedMsg);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[ClientHandler] Lỗi dịch khóa tin nhắn kết bạn: {ex.Message}");
+                    }
+                }
+            }
+        }
+
+        private void HandleFriendAccept(MessageDTO msg)
+        {
+            if (_currentUser == null) return;
+
+            int targetUserId = msg.TargetUserId;
+
+            // 1. Cập nhật MySQL DB thành ACCEPTED
+            FriendshipDAO.AcceptFriendRequest(targetUserId, _currentUser.Id);
+
+            // 2. Gửi danh sách cập nhật cho chính người nhận (người click accept)
+            SendCurrentUserList();
+
+            // 3. Thông báo cho người gửi lời mời
+            var senderHandler = _roomManager.GetOnlineClients().FirstOrDefault(c => c._currentUser?.Id == targetUserId);
+            if (senderHandler != null)
+            {
+                senderHandler.SendCurrentUserList();
+
+                var notifyMsg = new MessageDTO(MessageDTO.MessageType.FRIEND_ACCEPT)
+                {
+                    SenderId = _currentUser.Id,
+                    SenderUsername = _currentUser.Username,
+                    RoomId = msg.RoomId,
+                    TargetUserId = targetUserId
+                };
+                senderHandler.SendMessage(notifyMsg);
+            }
+        }
+
+        private void HandleFriendDecline(MessageDTO msg)
+        {
+            if (_currentUser == null) return;
+
+            int targetUserId = msg.TargetUserId;
+
+            // 1. Xóa trong MySQL DB
+            FriendshipDAO.RemoveFriendship(targetUserId, _currentUser.Id);
+
+            // 2. Gửi danh sách cập nhật cho chính mình
+            SendCurrentUserList();
+
+            // 3. Thông báo cho người gửi lời mời
+            var senderHandler = _roomManager.GetOnlineClients().FirstOrDefault(c => c._currentUser?.Id == targetUserId);
+            if (senderHandler != null)
+            {
+                senderHandler.SendCurrentUserList();
+
+                var notifyMsg = new MessageDTO(MessageDTO.MessageType.FRIEND_DECLINE)
+                {
+                    SenderId = _currentUser.Id,
+                    SenderUsername = _currentUser.Username,
+                    RoomId = msg.RoomId,
+                    TargetUserId = targetUserId
+                };
+                senderHandler.SendMessage(notifyMsg);
+            }
         }
 
         public void SendMessage(MessageDTO msg)
@@ -563,7 +727,7 @@ namespace SecureChat.Server
 
         private void SendUserList()
         {
-            var users = UserDAO.GetAllActiveUsers();
+            var users = UserDAO.GetAllActiveUsers(_currentUser?.Id ?? 0);
             var msg = new MessageDTO(MessageDTO.MessageType.USER_LIST)
             {
                 PlainContent = JsonSerializer.Serialize(users)

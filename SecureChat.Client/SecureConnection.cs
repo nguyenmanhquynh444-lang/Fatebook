@@ -213,6 +213,15 @@ namespace SecureChat.Client
         }
 
         /// <summary>
+        /// Mã hóa tin nhắn văn bản bằng khóa phiên AES.
+        /// </summary>
+        public string EncryptMessage(string plaintext)
+        {
+            if (_aesKey == null) throw new InvalidOperationException("Chưa cấu hình khóa mã hóa.");
+            return AESUtil.Encrypt(plaintext, _aesKey);
+        }
+
+        /// <summary>
         /// Giải mã mảng bytes file nhận được bằng khóa phiên AES.
         /// </summary>
         public byte[]? DecryptFile(string base64Encrypted)

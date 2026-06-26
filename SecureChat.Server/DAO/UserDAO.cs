@@ -300,20 +300,41 @@ namespace SecureChat.Server.DAO
         /// <summary>
         /// Lấy toàn bộ danh sách tài khoản active.
         /// </summary>
-        public static List<UserDTO> GetAllActiveUsers()
+        public static List<UserDTO> GetAllActiveUsers(int currentUserId = 0)
         {
             var list = new List<UserDTO>();
-            string sql = "SELECT id, username, display_name, public_key, status, avatar_base64, role, is_active " +
-                         "FROM users WHERE is_active = TRUE ORDER BY display_name";
+            string sql;
+            if (currentUserId > 0)
+            {
+                sql = @"
+                    SELECT u.id, u.username, u.display_name, u.public_key, u.status, u.avatar_base64, u.role, u.is_active,
+                           f.status AS friendship_status, f.sender_id AS friendship_sender
+                    FROM users u
+                    LEFT JOIN friendships f ON (f.sender_id = @currentUserId AND f.receiver_id = u.id) OR (f.sender_id = u.id AND f.receiver_id = @currentUserId)
+                    WHERE u.is_active = TRUE AND u.id <> @currentUserId
+                    ORDER BY u.display_name";
+            }
+            else
+            {
+                sql = "SELECT id, username, display_name, public_key, status, avatar_base64, role, is_active " +
+                      "FROM users WHERE is_active = TRUE ORDER BY display_name";
+            }
+
             try
             {
                 using (var conn = DatabaseConnection.GetConnection())
                 using (var cmd = new MySqlCommand(sql, conn))
-                using (var reader = cmd.ExecuteReader())
                 {
-                    while (reader.Read())
+                    if (currentUserId > 0)
                     {
-                        list.Add(MapToDTO(reader));
+                        cmd.Parameters.AddWithValue("@currentUserId", currentUserId);
+                    }
+                    using (var reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            list.Add(MapToDTO(reader, currentUserId));
+                        }
                     }
                 }
             }
@@ -353,10 +374,10 @@ namespace SecureChat.Server.DAO
             return null;
         }
 
-        private static UserDTO MapToDTO(MySqlDataReader reader)
+        private static UserDTO MapToDTO(MySqlDataReader reader, int currentUserId = 0)
         {
             int avatarCol = reader.GetOrdinal("avatar_base64");
-            return new UserDTO
+            var dto = new UserDTO
             {
                 Id = reader.GetInt32("id"),
                 Username = reader.GetString("username"),
@@ -365,8 +386,33 @@ namespace SecureChat.Server.DAO
                 Status = reader.GetString("status"),
                 AvatarBase64 = (avatarCol >= 0 && !reader.IsDBNull(avatarCol)) ? reader.GetString(avatarCol) : string.Empty,
                 Role = reader.GetString("role"),
-                IsActive = reader.GetBoolean("is_active")
+                IsActive = reader.GetBoolean("is_active"),
+                FriendshipStatus = "NONE"
             };
+
+            if (currentUserId > 0)
+            {
+                int statusCol = -1;
+                int senderCol = -1;
+                try { statusCol = reader.GetOrdinal("friendship_status"); } catch { }
+                try { senderCol = reader.GetOrdinal("friendship_sender"); } catch { }
+
+                if (statusCol >= 0 && !reader.IsDBNull(statusCol))
+                {
+                    string rawStatus = reader.GetString(statusCol); // "PENDING" or "ACCEPTED"
+                    if (rawStatus == "ACCEPTED")
+                    {
+                        dto.FriendshipStatus = "ACCEPTED";
+                    }
+                    else if (rawStatus == "PENDING" && senderCol >= 0 && !reader.IsDBNull(senderCol))
+                    {
+                        int senderId = reader.GetInt32(senderCol);
+                        dto.FriendshipStatus = (senderId == currentUserId) ? "PENDING_SENT" : "PENDING_RECEIVED";
+                    }
+                }
+            }
+
+            return dto;
         }
     }
 }

@@ -15,6 +15,7 @@ public class UserDTO implements Serializable {
     private String publicKey;   // RSA Public Key (Base64)
     private String status;      // ONLINE / OFFLINE / AWAY
     private String sessionToken;
+    private String friendshipStatus = "NONE";
 
     public UserDTO() {}
 
@@ -46,6 +47,9 @@ public class UserDTO implements Serializable {
 
     public String getSessionToken()          { return sessionToken; }
     public void   setSessionToken(String t)  { this.sessionToken = t; }
+
+    public String getFriendshipStatus()      { return friendshipStatus; }
+    public void   setFriendshipStatus(String s) { this.friendshipStatus = s; }
 
     @Override
     public String toString() {

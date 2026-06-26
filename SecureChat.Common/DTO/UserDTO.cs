@@ -11,6 +11,7 @@ namespace SecureChat.Common.DTO
         public string AvatarBase64 { get; set; } = string.Empty; // Avatar Base64
         public string Role { get; set; } = "USER";           // ADMIN / USER
         public bool IsActive { get; set; } = true;
+        public string FriendshipStatus { get; set; } = "NONE"; // NONE / PENDING_SENT / PENDING_RECEIVED / ACCEPTED
 
         public override string ToString()
         {

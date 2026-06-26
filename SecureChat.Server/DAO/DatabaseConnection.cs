@@ -71,6 +71,26 @@ namespace SecureChat.Server.DAO
             cmd.ExecuteNonQuery();
 
             Console.WriteLine("[Database] Đã bảo đảm tài khoản quản trị admin/admin123.");
+
+            EnsureFriendshipTable(conn);
+        }
+
+        private static void EnsureFriendshipTable(MySqlConnection conn)
+        {
+            string sql = @"
+                CREATE TABLE IF NOT EXISTS friendships (
+                    sender_id INT NOT NULL,
+                    receiver_id INT NOT NULL,
+                    status ENUM('PENDING', 'ACCEPTED') NOT NULL DEFAULT 'PENDING',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (sender_id, receiver_id),
+                    FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB;";
+
+            using var cmd = new MySqlCommand(sql, conn);
+            cmd.ExecuteNonQuery();
+            Console.WriteLine("[Database] Đã bảo đảm bảng friendships.");
         }
 
         private static void EnsureColumn(
