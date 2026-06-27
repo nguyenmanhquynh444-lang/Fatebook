@@ -47,6 +47,19 @@ CREATE TABLE IF NOT EXISTS room_members (
 ) ENGINE=InnoDB;
 
 -- ---------------------------------------------------------------
+-- Bảng bạn bè (Friendships)
+-- ---------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS friendships (
+    sender_id   INT NOT NULL,
+    receiver_id INT NOT NULL,
+    status      ENUM('PENDING', 'ACCEPTED') NOT NULL DEFAULT 'PENDING',
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (sender_id, receiver_id),
+    FOREIGN KEY (sender_id)   REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------
 -- Bảng lịch sử tin nhắn (lưu bản đã mã hoá AES trên server)
 -- ---------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS messages (
