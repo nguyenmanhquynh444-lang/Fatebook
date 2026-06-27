@@ -7,7 +7,7 @@ namespace SecureChat.Server.DAO
     {
         // Cấu hình kết nối MySQL mặc định cho XAMPP
         private static readonly string ConnectionString = 
-            "Server=localhost;Port=3306;Database=secure_chat;Uid=root;Pwd=;CharSet=utf8mb4;AllowPublicKeyRetrieval=True;SslMode=None;";
+            "Server=localhost;Port=3306;Database=secure_chat;Uid=root;Pwd=MậtKhẩuCủaBạn;CharSet=utf8mb4;AllowPublicKeyRetrieval=True;SslMode=None;";
 
         /// <summary>
         /// Mở và trả về một kết nối MySQL.
